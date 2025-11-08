@@ -12,9 +12,8 @@ import sys
 import argparse
 import hashlib
 from pathlib import Path
-from typing import Dict, List, Set, Optional, Tuple
+from typing import Dict, List, Optional
 from collections import defaultdict
-import shutil
 
 # Color codes for terminal output
 class Colors:
@@ -237,10 +236,10 @@ class DuplicateFinder:
                 keep_file = files[-1]
                 delete_files = files[:-1]
             elif keep == 'shortest':
-                keep_file = min(files, key=lambda f: len(f))
+                keep_file = min(files, key=len)
                 delete_files = [f for f in files if f != keep_file]
             elif keep == 'longest':
-                keep_file = max(files, key=lambda f: len(f))
+                keep_file = max(files, key=len)
                 delete_files = [f for f in files if f != keep_file]
             else:
                 keep_file = files[0]

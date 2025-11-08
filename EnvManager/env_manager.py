@@ -13,7 +13,7 @@ import argparse
 import re
 import shutil
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Tuple
 from collections import defaultdict
 
 # Color codes for terminal output

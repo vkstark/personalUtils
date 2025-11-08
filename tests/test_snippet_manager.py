@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from SnippetManager.snippet_manager import SnippetManager, Snippet
+from SnippetManager.snippet_manager import SnippetManager
 
 
 class TestSnippetManager:

@@ -12,7 +12,7 @@ import sys
 import argparse
 import ast
 from pathlib import Path
-from typing import Dict, List, Set, Tuple, Optional
+from typing import Dict, List, Tuple
 from collections import defaultdict
 
 # Color codes for terminal output

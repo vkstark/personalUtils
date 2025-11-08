@@ -11,8 +11,7 @@ import os
 import sys
 import argparse
 import difflib
-from pathlib import Path
-from typing import List, Tuple, Optional, Union
+from typing import List
 from enum import Enum
 import shutil
 
@@ -128,7 +127,7 @@ class FileDiff:
         """Get terminal width"""
         try:
             return shutil.get_terminal_size().columns
-        except:
+        except Exception:
             return 80
 
     def compare_files(self, file1: str, file2: str, mode: DiffMode = DiffMode.UNIFIED) -> str:

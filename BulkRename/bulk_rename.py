@@ -12,9 +12,8 @@ import sys
 import argparse
 import re
 import json
-import shutil
 from pathlib import Path
-from typing import List, Tuple, Dict, Optional, Callable
+from typing import List, Tuple, Optional
 from datetime import datetime
 from enum import Enum
 
@@ -135,7 +134,6 @@ class BulkRename:
     def _generate_new_name(self, filepath: Path, mode: RenameMode, **kwargs) -> Optional[str]:
         """Generate new filename based on mode"""
         old_name = filepath.name
-        parent = filepath.parent
         stem = filepath.stem
         ext = filepath.suffix
 

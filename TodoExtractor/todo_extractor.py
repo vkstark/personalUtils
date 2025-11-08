@@ -13,7 +13,7 @@ import argparse
 import re
 import json
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional, Set
+from typing import List, Dict, Optional
 from collections import defaultdict
 from datetime import datetime
 
@@ -343,12 +343,6 @@ class TodoExtractor:
     def _format_todo_item(self, todo: TodoItem, output: List[str], show_line_numbers: bool):
         """Format a single TODO item for display"""
         tag_color = self._get_tag_color(todo.tag)
-
-        # Build location string
-        if show_line_numbers:
-            location = f"  {todo.filepath}:{self._colorize(str(todo.line_num), Colors.DIM)}"
-        else:
-            location = f"  {todo.filepath}"
 
         # Build tag with author if present
         tag_str = self._colorize(f"[{todo.tag}]", tag_color)

@@ -5,7 +5,7 @@ import pytest
 import sys
 import json
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch, MagicMock
 from urllib.error import HTTPError, URLError
 
 sys.path.insert(0, str(Path(__file__).parent.parent))

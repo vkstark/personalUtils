@@ -103,7 +103,7 @@ class APITester:
 
             try:
                 body_json = json.loads(body) if body else None
-            except:
+            except (json.JSONDecodeError, ValueError):
                 body_json = None
 
             result = {

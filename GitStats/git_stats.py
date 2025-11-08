@@ -11,13 +11,11 @@ import os
 import sys
 import argparse
 import subprocess
-import re
 import json
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Any
+from typing import List
 from datetime import datetime, timedelta
 from collections import defaultdict, Counter
-import calendar
 
 # Color codes for terminal output
 class Colors:

@@ -15,7 +15,7 @@ import csv
 import xml.etree.ElementTree as ET
 import xml.dom.minidom as minidom
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 from io import StringIO
 
 # Try to import optional dependencies
