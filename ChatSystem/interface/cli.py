@@ -212,8 +212,8 @@ Type your message or try these commands:
         # Display welcome
         self.display_welcome()
 
-        try:
-            while True:
+        while True:
+            try:
                 # Get user input
                 self.console.print()
                 user_input = Prompt.ask("[bold green]You[/bold green]")
@@ -233,7 +233,7 @@ Type your message or try these commands:
 
                 # Stream response
                 self.console.print("[bold cyan]🤖 Assistant:[/bold cyan]")
-                
+
                 response_parts = []
                 for chunk in self.chat_engine.chat(user_input):
                     self.console.print(chunk, end="")
@@ -241,19 +241,20 @@ Type your message or try these commands:
 
                 self.console.print()  # New line after response
 
-        except KeyboardInterrupt:
-            self.console.print("\n\n[yellow]Interrupted. Use /exit to quit properly.[/yellow]\n")
-            # Continue the loop instead of recursively calling run()
+            except KeyboardInterrupt:
+                self.console.print("\n\n[yellow]Interrupted. Use /exit to quit properly.[/yellow]\n")
+                continue  # Continue the loop instead of exiting
 
-        except EOFError:
-            self.console.print("\n[yellow]Goodbye! 👋[/yellow]\n")
-            return
+            except EOFError:
+                self.console.print("\n[yellow]Goodbye! 👋[/yellow]\n")
+                break
 
-        except Exception as e:
-            self.console.print(f"\n[red]Error:[/red] {str(e)}\n")
-            if self.settings.log_level == "DEBUG":
-                import traceback
-                self.console.print(traceback.format_exc())
+            except Exception as e:
+                self.console.print(f"\n[red]Error:[/red] {str(e)}\n")
+                if self.settings.log_level == "DEBUG":
+                    import traceback
+                    self.console.print(traceback.format_exc())
+                continue  # Continue after error
 
 
 def main():

@@ -80,39 +80,38 @@ class ChatEngine:
         if stream:
             # Streaming response
             full_response = ""
-            for chunk in self._chat_stream(model, max_tokens, temperature):
+            had_tool_calls = False
+
+            for chunk, is_tool_response in self._chat_stream(model, max_tokens, temperature):
                 full_response += chunk
+                had_tool_calls = is_tool_response
                 yield chunk
 
-            # Add assistant response to conversation if not already added by tool handling
-            # Check if last message is from assistant (which would mean tools were used)
-            messages = self.conversation.get_messages()
-            if messages and messages[-1].get("role") == "assistant":
-                # Already added by _handle_tool_calls, don't add again
-                pass
-            else:
-                # No tool calls, add the response
+            # Add assistant response only if tools weren't used
+            # Tool handling adds its own messages to the conversation
+            if not had_tool_calls and full_response:
                 self.conversation.add_message(role="assistant", content=full_response)
 
         else:
             # Non-streaming response
-            response = self._chat_completion(model, max_tokens, temperature)
+            response, tool_calls_handled = self._chat_completion(model, max_tokens, temperature)
 
-            # Add assistant response to conversation if not already added by tool handling
-            messages = self.conversation.get_messages()
-            if messages and messages[-1].get("role") == "assistant":
-                # Already added by _handle_tool_calls, don't add again
-                pass
-            else:
-                # No tool calls, add the response
+            # Add assistant response only if tools weren't used
+            # Tool handling adds its own messages to the conversation
+            if not tool_calls_handled and response:
                 self.conversation.add_message(role="assistant", content=response)
 
             yield response
 
     def _chat_completion(
         self, model: str, max_tokens: int, temperature: float
-    ) -> str:
-        """Get non-streaming chat completion"""
+    ) -> tuple[str, bool]:
+        """
+        Get non-streaming chat completion
+
+        Returns:
+            tuple[str, bool]: (response_content, tool_calls_handled)
+        """
 
         messages = self.conversation.get_messages()
 
@@ -151,14 +150,20 @@ class ChatEngine:
         message = response.choices[0].message
 
         if message.tool_calls:
-            return self._handle_tool_calls(message.tool_calls, model, max_tokens, temperature)
+            tool_response = self._handle_tool_calls(message.tool_calls, model, max_tokens, temperature)
+            return tool_response, True  # Tool calls were handled
 
-        return message.content or ""
+        return message.content or "", False  # No tool calls
 
     def _chat_stream(
         self, model: str, max_tokens: int, temperature: float
-    ) -> Iterator[str]:
-        """Get streaming chat completion"""
+    ) -> Iterator[tuple[str, bool]]:
+        """
+        Get streaming chat completion
+
+        Yields:
+            tuple[str, bool]: (chunk_content, is_tool_response)
+        """
 
         messages = self.conversation.get_messages()
 
@@ -184,6 +189,7 @@ class ChatEngine:
         # Collect streamed response
         full_content = ""
         tool_calls = []
+        had_tool_calls = False
 
         for chunk in stream:
             chunk: ChatCompletionChunk
@@ -197,10 +203,11 @@ class ChatEngine:
             if delta.content:
                 content_chunk = delta.content
                 full_content += content_chunk
-                yield content_chunk
+                yield content_chunk, False
 
             # Handle tool calls
             if delta.tool_calls:
+                had_tool_calls = True
                 for tc in delta.tool_calls:
                     # Build up tool calls incrementally
                     if tc.index >= len(tool_calls):
@@ -237,7 +244,7 @@ class ChatEngine:
                 formatted_tool_calls, model, max_tokens, temperature
             )
 
-            yield "\n\n" + tool_response
+            yield "\n\n" + tool_response, True
 
     def _handle_tool_calls(
         self,
@@ -250,85 +257,88 @@ class ChatEngine:
 
         if not self.tool_executor:
             return "Error: Tool executor not configured"
-        
+
         # Check recursion depth to prevent infinite loops
         self.tool_call_depth += 1
         if self.tool_call_depth > self.max_tool_call_depth:
             self.tool_call_depth -= 1
             return f"Error: Maximum tool call depth ({self.max_tool_call_depth}) exceeded. Stopping to prevent infinite recursion."
 
-        self.stats["tool_calls_made"] += len(tool_calls)
+        # Use try/finally to ensure recursion depth is always decremented
+        try:
+            self.stats["tool_calls_made"] += len(tool_calls)
 
-        # Add assistant message with tool calls
-        self.conversation.add_message(
-            role="assistant",
-            content=None,
-            tool_calls=[tc.model_dump() for tc in tool_calls],
-        )
+            # Add assistant message with tool calls
+            self.conversation.add_message(
+                role="assistant",
+                content=None,
+                tool_calls=[tc.model_dump() for tc in tool_calls],
+            )
 
-        # Execute each tool call
-        tool_results = []
+            # Execute each tool call
+            tool_results = []
 
-        for tool_call in tool_calls:
-            function_name = tool_call.function.name
-            
-            # Parse function arguments with error handling
-            try:
-                function_args = json.loads(tool_call.function.arguments)
-            except json.JSONDecodeError as e:
-                error_msg = f"Error parsing tool arguments: {str(e)}"
+            for tool_call in tool_calls:
+                function_name = tool_call.function.name
+
+                # Parse function arguments with error handling
+                try:
+                    function_args = json.loads(tool_call.function.arguments)
+                except json.JSONDecodeError as e:
+                    error_msg = f"Error parsing tool arguments: {str(e)}"
+                    self.conversation.add_message(
+                        role="tool",
+                        content=json.dumps({"error": error_msg}),
+                        tool_call_id=tool_call.id,
+                        name=function_name,
+                    )
+                    tool_results.append({"error": error_msg})
+                    continue
+
+                # Execute tool
+                result = self.tool_executor(function_name, function_args)
+
+                # Add tool response to conversation
                 self.conversation.add_message(
                     role="tool",
-                    content=json.dumps({"error": error_msg}),
+                    content=json.dumps(result),
                     tool_call_id=tool_call.id,
                     name=function_name,
                 )
-                tool_results.append({"error": error_msg})
-                continue
 
-            # Execute tool
-            result = self.tool_executor(function_name, function_args)
+                tool_results.append(result)
 
-            # Add tool response to conversation
-            self.conversation.add_message(
-                role="tool",
-                content=json.dumps(result),
-                tool_call_id=tool_call.id,
-                name=function_name,
+            # Get final response from model
+            messages = self.conversation.get_messages()
+
+            response: ChatCompletion = self.client.chat.completions.create(
+                model=model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
             )
 
-            tool_results.append(result)
+            # Update statistics
+            if response.usage:
+                self.stats["total_input_tokens"] += response.usage.prompt_tokens
+                self.stats["total_output_tokens"] += response.usage.completion_tokens
 
-        # Get final response from model
-        messages = self.conversation.get_messages()
+                cost = calculate_cost(
+                    model,
+                    response.usage.prompt_tokens,
+                    response.usage.completion_tokens,
+                )
+                self.stats["total_cost"] += cost
 
-        response: ChatCompletion = self.client.chat.completions.create(
-            model=model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
+            # Add the final response to conversation
+            final_content = response.choices[0].message.content or ""
+            if final_content:
+                self.conversation.add_message(role="assistant", content=final_content)
 
-        # Update statistics
-        if response.usage:
-            self.stats["total_input_tokens"] += response.usage.prompt_tokens
-            self.stats["total_output_tokens"] += response.usage.completion_tokens
-
-            cost = calculate_cost(
-                model,
-                response.usage.prompt_tokens,
-                response.usage.completion_tokens,
-            )
-            self.stats["total_cost"] += cost
-
-        # Add the final response to conversation
-        final_content = response.choices[0].message.content or ""
-        if final_content:
-            self.conversation.add_message(role="assistant", content=final_content)
-        
-        # Decrement recursion depth before returning
-        self.tool_call_depth -= 1
-        return final_content
+            return final_content
+        finally:
+            # Always decrement recursion depth, even if an exception occurred
+            self.tool_call_depth -= 1
 
     def get_stats(self) -> Dict[str, Any]:
         """Get usage statistics"""
