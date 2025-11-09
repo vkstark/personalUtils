@@ -4,7 +4,6 @@ ToolExecutor - Safely execute utility tools
 """
 
 import sys
-import os
 import json
 import subprocess
 from typing import Dict, Any, Optional
@@ -212,6 +211,11 @@ class ToolExecutor:
                 check=False
             )
 
+            # Check for non-zero exit code
+            if result.returncode != 0:
+                error_output = result.stderr.strip() if result.stderr else "Unknown error"
+                return f"Error: Command failed with exit code {result.returncode}: {error_output}"
+            
             # Return output
             output = result.stdout or result.stderr
             return output.strip() if output else "Command executed successfully"

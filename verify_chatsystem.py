@@ -103,7 +103,6 @@ print("\n6️⃣  Testing Agent System...")
 try:
     from ChatSystem.agent.planner import TaskPlanner
     from ChatSystem.agent.reasoner import Reasoner
-    from ChatSystem.agent.executor import AgentExecutor
 
     planner = TaskPlanner()
     print(f"   ✅ TaskPlanner initialized")
@@ -153,7 +152,7 @@ print("✅ ALL TESTS PASSED!")
 print("="*60)
 print("\n📋 Summary:")
 print("   ✅ Configuration system working")
-print("   ✅ 12 tools properly defined")
+print(f"   ✅ {len(tools)} tools properly defined")
 print("   ✅ Tool registry operational")
 print("   ✅ Conversation management ready")
 print("   ✅ Chat engine structure valid")

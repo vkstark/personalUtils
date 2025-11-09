@@ -3,10 +3,10 @@
 AgentExecutor - Execute complex multi-step tasks
 """
 
-from typing import Dict, Any, Optional, List
+from typing import Optional
 from ..core.chat_engine import ChatEngine
 from ..core.config import Settings
-from .planner import TaskPlanner, TaskPlan
+from .planner import TaskPlanner
 from .reasoner import Reasoner
 
 
@@ -36,20 +36,7 @@ class AgentExecutor:
         self.reasoner.add_thought(f"User wants: {user_request}")
 
         # Step 2: Determine if planning is needed
-        planning_prompt = f"""Analyze this request and determine if it requires multiple steps:
-
-Request: {user_request}
-
-Consider:
-1. Does it require using multiple tools?
-2. Does it need sequential operations?
-3. Is it a simple single-action request?
-
-If it needs multiple steps, respond with "MULTI_STEP" and list the steps.
-If it's simple, respond with "SINGLE_STEP"."""
-
-        # Get planning decision (this would call the LLM)
-        # For now, we'll use simple heuristics
+        # Get planning decision using simple heuristics
 
         is_multi_step = self._needs_planning(user_request)
 
@@ -86,7 +73,6 @@ If it's simple, respond with "SINGLE_STEP"."""
         """Execute a multi-step task with planning"""
 
         results = []
-        iteration = 0
 
         # Ask LLM to break down the task
         planning_request = f"""Break down this task into clear steps:

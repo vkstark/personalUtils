@@ -12,8 +12,7 @@ from rich.table import Table
 from rich.live import Live
 from rich.spinner import Spinner
 from rich.prompt import Prompt, Confirm
-from rich.syntax import Syntax
-from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.progress import TextColumn
 
 from ..core.config import Settings, get_settings
 from ..core.chat_engine import ChatEngine
@@ -156,7 +155,7 @@ Type your message or try these commands:
             TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
         )
 
-        task = progress.add_task(
+        progress.add_task(
             "usage",
             total=usage["max_tokens"],
             completed=usage["total_tokens"]
@@ -207,7 +206,7 @@ Type your message or try these commands:
 
         return True
 
-    def run(self):
+    def run(self) -> None:
         """Run the interactive chat loop"""
 
         # Display welcome
@@ -232,17 +231,10 @@ Type your message or try these commands:
                 # Display thinking indicator
                 self.console.print()
 
-                # Get response with streaming
-                response_parts = []
-
-                with Live(Spinner("dots", text="Thinking..."), console=self.console, transient=True):
-                    # Small delay to show spinner
-                    import time
-                    time.sleep(0.5)
-
                 # Stream response
                 self.console.print("[bold cyan]🤖 Assistant:[/bold cyan]")
-
+                
+                response_parts = []
                 for chunk in self.chat_engine.chat(user_input):
                     self.console.print(chunk, end="")
                     response_parts.append(chunk)
@@ -251,10 +243,11 @@ Type your message or try these commands:
 
         except KeyboardInterrupt:
             self.console.print("\n\n[yellow]Interrupted. Use /exit to quit properly.[/yellow]\n")
-            return self.run()
+            # Continue the loop instead of recursively calling run()
 
         except EOFError:
             self.console.print("\n[yellow]Goodbye! 👋[/yellow]\n")
+            return
 
         except Exception as e:
             self.console.print(f"\n[red]Error:[/red] {str(e)}\n")

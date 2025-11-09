@@ -32,13 +32,12 @@ def main():
         print(f"\n👤 User: {user_msg}")
         print("🤖 Assistant: ", end="")
 
-        # Get response (streaming)
-        response_parts = []
+        # Get response (non-streaming)
+        response_text = ""
         for chunk in chat_engine.chat(user_msg, stream=False):
-            print(chunk, end="", flush=True)
-            response_parts.append(chunk)
-
-        print()  # New line
+            response_text += chunk
+        
+        print(response_text)
 
     # Show stats
     print("\n" + "="*50)

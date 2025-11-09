@@ -3,7 +3,7 @@
 TaskPlanner - Break down complex tasks into steps
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 from pydantic import BaseModel
 
 

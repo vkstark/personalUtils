@@ -3,7 +3,7 @@
 Reasoner - Chain-of-thought reasoning
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 
 
 class ReasoningStep:

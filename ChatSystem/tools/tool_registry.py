@@ -4,7 +4,6 @@ ToolRegistry - Register and manage available tools
 """
 
 from typing import List, Dict, Any, Optional, Callable
-from pathlib import Path
 
 from .tool_adapter import ToolAdapter
 from .tool_executor import ToolExecutor

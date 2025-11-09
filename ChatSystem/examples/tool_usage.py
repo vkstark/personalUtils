@@ -45,8 +45,8 @@ def main():
         print(f"{'='*60}\n")
         print("🤖 Assistant: ", end="")
 
-        # Get response
-        for chunk in chat_engine.chat(request, stream=True):
+        # Get response (stream parameter uses Settings default)
+        for chunk in chat_engine.chat(request):
             print(chunk, end="", flush=True)
 
         print("\n")

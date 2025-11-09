@@ -10,7 +10,7 @@ from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall
 
 from .config import Settings, calculate_cost
-from .conversation import ConversationManager, Message
+from .conversation import ConversationManager
 
 
 class ChatEngine:
@@ -38,6 +38,10 @@ class ChatEngine:
         # Tool registry (will be set by tool system)
         self.tools: List[Dict[str, Any]] = []
         self.tool_executor: Optional[Callable] = None
+        
+        # Tool call recursion tracking
+        self.tool_call_depth = 0
+        self.max_tool_call_depth = 5  # Prevent infinite recursion
 
         # Statistics
         self.stats = {
@@ -80,15 +84,28 @@ class ChatEngine:
                 full_response += chunk
                 yield chunk
 
-            # Add assistant response to conversation
-            self.conversation.add_message(role="assistant", content=full_response)
+            # Add assistant response to conversation if not already added by tool handling
+            # Check if last message is from assistant (which would mean tools were used)
+            messages = self.conversation.get_messages()
+            if messages and messages[-1].get("role") == "assistant":
+                # Already added by _handle_tool_calls, don't add again
+                pass
+            else:
+                # No tool calls, add the response
+                self.conversation.add_message(role="assistant", content=full_response)
 
         else:
             # Non-streaming response
             response = self._chat_completion(model, max_tokens, temperature)
 
-            # Add assistant response to conversation
-            self.conversation.add_message(role="assistant", content=response)
+            # Add assistant response to conversation if not already added by tool handling
+            messages = self.conversation.get_messages()
+            if messages and messages[-1].get("role") == "assistant":
+                # Already added by _handle_tool_calls, don't add again
+                pass
+            else:
+                # No tool calls, add the response
+                self.conversation.add_message(role="assistant", content=response)
 
             yield response
 
@@ -233,6 +250,12 @@ class ChatEngine:
 
         if not self.tool_executor:
             return "Error: Tool executor not configured"
+        
+        # Check recursion depth to prevent infinite loops
+        self.tool_call_depth += 1
+        if self.tool_call_depth > self.max_tool_call_depth:
+            self.tool_call_depth -= 1
+            return f"Error: Maximum tool call depth ({self.max_tool_call_depth}) exceeded. Stopping to prevent infinite recursion."
 
         self.stats["tool_calls_made"] += len(tool_calls)
 
@@ -248,7 +271,20 @@ class ChatEngine:
 
         for tool_call in tool_calls:
             function_name = tool_call.function.name
-            function_args = json.loads(tool_call.function.arguments)
+            
+            # Parse function arguments with error handling
+            try:
+                function_args = json.loads(tool_call.function.arguments)
+            except json.JSONDecodeError as e:
+                error_msg = f"Error parsing tool arguments: {str(e)}"
+                self.conversation.add_message(
+                    role="tool",
+                    content=json.dumps({"error": error_msg}),
+                    tool_call_id=tool_call.id,
+                    name=function_name,
+                )
+                tool_results.append({"error": error_msg})
+                continue
 
             # Execute tool
             result = self.tool_executor(function_name, function_args)
@@ -285,7 +321,14 @@ class ChatEngine:
             )
             self.stats["total_cost"] += cost
 
-        return response.choices[0].message.content or ""
+        # Add the final response to conversation
+        final_content = response.choices[0].message.content or ""
+        if final_content:
+            self.conversation.add_message(role="assistant", content=final_content)
+        
+        # Decrement recursion depth before returning
+        self.tool_call_depth -= 1
+        return final_content
 
     def get_stats(self) -> Dict[str, Any]:
         """Get usage statistics"""

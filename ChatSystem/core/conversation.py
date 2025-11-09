@@ -66,7 +66,7 @@ class ConversationManager:
         try:
             self.encoding = tiktoken.encoding_for_model(model)
         except KeyError:
-            # Fallback for newer models
+            # Fallback for unknown/unsupported models - use latest encoding
             self.encoding = tiktoken.get_encoding("o200k_base")
 
         # Add system prompt if provided
@@ -81,7 +81,7 @@ class ConversationManager:
 
     def _add_default_system_prompt(self):
         """Add default system prompt"""
-        system_prompt = """You are an advanced AI assistant with access to 12 powerful utilities:
+        system_prompt = """You are an advanced AI assistant with access to powerful utilities:
 
 1. **CodeWhisper** - Analyze Python code structure and complexity
 2. **APITester** - Test HTTP API endpoints

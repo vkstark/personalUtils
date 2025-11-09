@@ -87,7 +87,8 @@ class TestTools:
         from ChatSystem.tools.tool_adapter import ToolAdapter
 
         tools = ToolAdapter.get_all_tools()
-        assert len(tools) == 12  # Should have all 12 utilities
+        # Should have all defined utilities
+        assert len(tools) == len(ToolAdapter.TOOL_DEFINITIONS)
 
         # Check structure
         for tool in tools:

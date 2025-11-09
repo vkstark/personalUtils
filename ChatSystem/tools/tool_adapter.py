@@ -378,7 +378,15 @@ class ToolAdapter:
 
     @classmethod
     def get_all_tools(cls) -> List[Dict[str, Any]]:
-        """Get all tools in OpenAI function calling format"""
+        """
+        Get all available tools in OpenAI function calling format.
+        
+        Returns:
+            List[Dict[str, Any]]: A list of tool definitions compatible with OpenAI's 
+                                   chat completions API. Each tool contains:
+                                   - type: Always "function"
+                                   - function: Object with name, description, and parameters
+        """
         tools = []
 
         for util_name, definition in cls.TOOL_DEFINITIONS.items():
@@ -401,7 +409,15 @@ class ToolAdapter:
 
     @classmethod
     def get_tool_by_name(cls, name: str) -> Optional[Dict[str, Any]]:
-        """Get specific tool by function name"""
+        """
+        Get a specific tool definition by its function name.
+        
+        Args:
+            name (str): The function name of the tool to retrieve
+            
+        Returns:
+            Optional[Dict[str, Any]]: The tool definition in OpenAI format, or None if not found
+        """
         for util_name, definition in cls.TOOL_DEFINITIONS.items():
             if definition["name"] == name:
                 return {
@@ -417,7 +433,15 @@ class ToolAdapter:
 
     @classmethod
     def get_enabled_tools(cls, enabled_utils: List[str]) -> List[Dict[str, Any]]:
-        """Get only enabled tools"""
+        """
+        Get only the tools that are enabled based on the provided utility names.
+        
+        Args:
+            enabled_utils (List[str]): List of utility names to include (e.g., ["CodeWhisper", "APITester"])
+            
+        Returns:
+            List[Dict[str, Any]]: A filtered list of tool definitions in OpenAI format
+        """
         tools = []
 
         for util_name, definition in cls.TOOL_DEFINITIONS.items():
