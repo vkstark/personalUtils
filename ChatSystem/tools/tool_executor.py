@@ -76,6 +76,7 @@ class ToolExecutor:
         """Execute specific utility with arguments"""
 
         # Build command line arguments based on function
+        # Note: Using list-based arguments with shell=False is secure against injection
         cmd = [sys.executable, str(script_path)]
 
         if function_name == "analyze_python_code":
@@ -202,13 +203,17 @@ class ToolExecutor:
             return f"Function {function_name} not fully implemented"
 
         # Execute command
+        # Security note: Using list-based arguments without shell=True is secure
+        # against command injection. Arguments are passed directly to the executable
+        # without shell interpretation, even if they contain special characters.
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=60,
-                check=False
+                check=False,
+                shell=False  # Explicitly disable shell for security
             )
 
             # Check for non-zero exit code
