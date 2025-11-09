@@ -1,0 +1,36 @@
+# ChatSystem Configuration
+
+models:
+  # Model selection based on task complexity
+  simple: gpt-4o-mini        # Fast, cost-effective ($0.15/$0.60)
+  general: gpt-4o            # Best balance ($2.50/$10.00)
+  long_context: gpt-4.1      # 1M tokens for large codebases
+  reasoning: o3-mini         # Advanced reasoning ($1.00/$4.00)
+
+tools:
+  # Automatically discovered utilities
+  enabled:
+    - CodeWhisper
+    - APITester
+    - DuplicateFinder
+    - SnippetManager
+    - BulkRename
+    - EnvManager
+    - FileDiff
+    - GitStats
+    - ImportOptimizer
+    - PathSketch
+    - TodoExtractor
+    - DataConvert
+
+agent:
+  max_iterations: 5
+  enable_planning: true
+  enable_reasoning: true
+  timeout_seconds: 300
+
+cli:
+  theme: monokai
+  show_timestamps: true
+  show_token_usage: true
+  auto_save_history: true
