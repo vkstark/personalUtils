@@ -32,7 +32,7 @@ class ToolExecutor:
             "compare_files": "FileDiff/file_diff.py",
             "analyze_git_repository": "GitStats/git_stats.py",
             "optimize_python_imports": "ImportOptimizer/import_optimizer.py",
-            "path_operations": "PathSketch/path_sketch.py",
+            "visualize_directory_tree": "PathSketch/path_sketch.py",
             "extract_todos": "TodoExtractor/todo_extractor.py",
             "convert_data_format": "DataConvert/data_convert.py",
         }
@@ -159,7 +159,7 @@ class ToolExecutor:
             cmd.append(args["file1"])
             cmd.append(args["file2"])
             if args.get("format"):
-                cmd.extend(["--format", args["format"]])
+                cmd.extend(["--mode", args["format"]])  # FileDiff uses --mode, not --format
             cmd.append("--no-color")
 
         elif function_name == "analyze_git_repository":
@@ -186,33 +186,50 @@ class ToolExecutor:
                 cmd.append("--no-color")
 
         elif function_name == "optimize_python_imports":
-            cmd.append(args["file_path"])
-            if args.get("check_only"):
-                cmd.append("--check")
-            cmd.append("--no-color")
-
-        elif function_name == "path_operations":
-            operation = args["operation"]
-            cmd.append(operation)
+            # ImportOptimizer uses subcommands: unused or organize
+            command = args.get("command", "unused")
+            cmd.append(command)
             cmd.append(args["path"])
-            if args.get("additional_paths"):
-                cmd.extend(args["additional_paths"])
+
+            if command == "unused" and args.get("recursive"):
+                cmd.append("--recursive")
+
+            if args.get("no_color", True):
+                cmd.append("--no-color")
+
+        elif function_name == "visualize_directory_tree":
+            # PathSketch is a directory tree visualization tool
+            cmd.append(args.get("path", "."))
+
+            if args.get("show_all"):
+                cmd.append("--all")
+            if args.get("show_size"):
+                cmd.append("--size")
+            if args.get("max_depth") and args["max_depth"] > 0:
+                cmd.extend(["--max-depth", str(args["max_depth"])])
+            if args.get("pattern"):
+                cmd.extend(["--pattern", args["pattern"]])
+            if args.get("sort_by"):
+                cmd.extend(["--sort", args["sort_by"]])
+            if args.get("no_color", True):
+                cmd.append("--no-color")
 
         elif function_name == "extract_todos":
             cmd.append(args["path"])
-            if args.get("recursive"):
-                cmd.append("--recursive")
+            # TodoExtractor uses --no-recursive flag (inverted logic)
+            if not args.get("recursive", True):
+                cmd.append("--no-recursive")
             if args.get("extensions"):
                 cmd.extend(["--extensions"] + args["extensions"])
             if args.get("keywords"):
-                cmd.extend(["--keywords"] + args["keywords"])
+                cmd.extend(["--tags"] + args["keywords"])  # TodoExtractor uses --tags, not --keywords
             cmd.append("--no-color")
 
         elif function_name == "convert_data_format":
             cmd.append(args["input_file"])
             cmd.append(args["output_file"])
-            cmd.extend(["--from", args["from_format"]])
-            cmd.extend(["--to", args["to_format"]])
+            cmd.extend(["--input-format", args["from_format"]])  # DataConvert uses --input-format
+            cmd.extend(["--output-format", args["to_format"]])  # DataConvert uses --output-format
 
         else:
             return f"Function {function_name} not fully implemented"

@@ -273,49 +273,80 @@ class ToolAdapter:
 
         "ImportOptimizer": {
             "name": "optimize_python_imports",
-            "description": "Optimize and organize Python import statements. Remove unused imports and sort them properly.",
+            "description": "Analyze and organize Python import statements. Can find unused imports in files/directories or show properly organized imports for a file.",
             "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "file_path": {
+                    "command": {
                         "type": "string",
-                        "description": "Python file path to optimize"
+                        "enum": ["unused", "organize"],
+                        "description": "Command to execute: 'unused' finds unused imports, 'organize' shows properly organized imports"
                     },
-                    "check_only": {
+                    "path": {
+                        "type": "string",
+                        "description": "For 'unused': file or directory path to analyze. For 'organize': Python file path"
+                    },
+                    "recursive": {
                         "type": "boolean",
-                        "description": "Only check without modifying",
+                        "description": "For 'unused' command: recursively scan directories",
                         "default": False
+                    },
+                    "no_color": {
+                        "type": "boolean",
+                        "description": "Disable colored output",
+                        "default": True
                     }
                 },
-                "required": ["file_path"],
+                "required": ["command", "path"],
                 "additionalProperties": False
             }
         },
 
         "PathSketch": {
-            "name": "path_operations",
-            "description": "Perform path operations like normalization, resolution, joining, and validation.",
+            "name": "visualize_directory_tree",
+            "description": "Visualize directory structure as a tree. Shows files and folders in a hierarchical tree format with optional file sizes, permissions, and filtering.",
             "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "operation": {
-                        "type": "string",
-                        "enum": ["normalize", "resolve", "join", "split", "exists"],
-                        "description": "Path operation to perform"
-                    },
                     "path": {
                         "type": "string",
-                        "description": "Path to operate on"
+                        "description": "Directory path to visualize (default: current directory)",
+                        "default": "."
                     },
-                    "additional_paths": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Additional paths (for join operation)"
+                    "show_all": {
+                        "type": "boolean",
+                        "description": "Show hidden files and directories",
+                        "default": False
+                    },
+                    "show_size": {
+                        "type": "boolean",
+                        "description": "Show file sizes",
+                        "default": False
+                    },
+                    "max_depth": {
+                        "type": "integer",
+                        "description": "Maximum depth to traverse (e.g., 2 for two levels)",
+                        "default": -1
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "Filter files by regex pattern (e.g., '.*\\.py$' for Python files)"
+                    },
+                    "sort_by": {
+                        "type": "string",
+                        "enum": ["name", "size", "modified"],
+                        "description": "Sort entries by name, size, or modification time",
+                        "default": "name"
+                    },
+                    "no_color": {
+                        "type": "boolean",
+                        "description": "Disable colored output",
+                        "default": True
                     }
                 },
-                "required": ["operation", "path"],
+                "required": ["path"],
                 "additionalProperties": False
             }
         },
