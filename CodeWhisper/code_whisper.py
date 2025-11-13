@@ -201,7 +201,11 @@ class PythonAnalyzer:
                 elif isinstance(child.func, ast.Attribute):
                     try:
                         value_name = self._safe_unparse(child.func.value)
-                        calls.append(f"{value_name}.{child.func.attr}")
+                        # Check for None - _safe_unparse can return None
+                        if value_name:
+                            calls.append(f"{value_name}.{child.func.attr}")
+                        else:
+                            calls.append(f"*.{child.func.attr}")
                     except (AttributeError, TypeError, ValueError):
                         # If we can't safely unparse the value, use wildcard
                         calls.append(f"*.{child.func.attr}")

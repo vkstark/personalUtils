@@ -99,7 +99,7 @@ cmd.extend(["--output-format", args["to_format"]])
 ```
 
 **Files Changed:**
-- `ChatSystem/tools/tool_executor.py` (lines 214-215)
+- `ChatSystem/tools/tool_executor.py` (lines 231-232)
 
 ---
 
@@ -119,7 +119,7 @@ cmd.extend(["--output-format", args["to_format"]])
 
 **Fix:**
 ```python
-# ChatSystem/tools/tool_executor.py lines 203-209
+# ChatSystem/tools/tool_executor.py lines 220-225
 # BEFORE:
 if args.get("recursive"):
     cmd.append("--recursive")
@@ -128,13 +128,13 @@ if args.get("keywords"):
 
 # AFTER:
 if not args.get("recursive", True):  # Inverted logic!
-    cmd.append("--no-recursive")
+    cmd.append("--no-recursive")  # Line 221
 if args.get("keywords"):
-    cmd.extend(["--tags"] + args["keywords"])  # Uses --tags, not --keywords
+    cmd.extend(["--tags"] + args["keywords"])  # Line 225 - Uses --tags, not --keywords
 ```
 
 **Files Changed:**
-- `ChatSystem/tools/tool_executor.py` (lines 203-209)
+- `ChatSystem/tools/tool_executor.py` (lines 220-221, 225)
 
 ---
 
@@ -239,7 +239,7 @@ elif function_name == "visualize_directory_tree":  # Changed from path_operation
 
 ## Code Quality Fixes
 
-### 2. **Bare Except Clause in CodeWhisper** (HIGH Severity - Fixed)
+### 1. **Bare Except Clause in CodeWhisper** (HIGH Severity - Fixed)
 
 **Problem:**
 ```python
@@ -256,17 +256,27 @@ except (AttributeError, TypeError, ValueError):
     calls.append(f"*.{child.func.attr}")
 ```
 
+**Additional Fix (from code review):**
+Added None check for `_safe_unparse` return value which can be None:
+```python
+value_name = self._safe_unparse(child.func.value)
+if value_name:
+    calls.append(f"{value_name}.{child.func.attr}")
+else:
+    calls.append(f"*.{child.func.attr}")
+```
+
 **Files Changed:**
-- `CodeWhisper/code_whisper.py` (lines 202-207)
+- `CodeWhisper/code_whisper.py` (lines 202-211)
 
 ---
 
-### 3. **Empty Pass Statements in GitStats** (MEDIUM Severity - Fixed)
+### 2. **Empty Pass Statements in GitStats** (MEDIUM Severity - Fixed)
 
 **Problem 1: Silent Error Suppression**
 ```python
 except ValueError:
-    pass  # Two instances - lines 181 and 262
+    pass  # Two instances
 ```
 
 **Issue:** Errors are silently ignored, making debugging impossible.
@@ -284,7 +294,7 @@ except ValueError:
 ```python
 def _calculate_stats(self):
     """Calculate additional statistics"""
-    pass  # Line 273
+    pass
 ```
 
 **Issue:** Method is called but does nothing.
@@ -310,7 +320,7 @@ def _calculate_stats(self):
 ```
 
 **Files Changed:**
-- `GitStats/git_stats.py` (lines 174-184, 258-266, 275-298)
+- `GitStats/git_stats.py` (lines 180-184, 264-266, 275-298)
 
 ---
 
@@ -433,13 +443,13 @@ python3 verify_chatsystem.py
 | **ImportOptimizer** | Wrong architecture (file_path vs subcommands) | CRITICAL | ✅ Fixed |
 | **PathSketch** | COMPLETELY WRONG TOOL (path ops vs tree viz) | CRITICAL | ✅ Fixed |
 
-### Code Quality Fixes (2 issues)
+### Code Quality Fixes (3 issues)
 
 | Issue | File | Severity | Status |
 |-------|------|----------|--------|
-| Bare except clause | CodeWhisper/code_whisper.py:205 | HIGH | ✅ Fixed |
-| Empty pass statements | GitStats/git_stats.py:181,264 | MEDIUM | ✅ Fixed |
-| Unimplemented method | GitStats/git_stats.py:275 | MEDIUM | ✅ Fixed |
+| Bare except clause + None check | CodeWhisper/code_whisper.py:202-211 | HIGH | ✅ Fixed |
+| Empty pass statements | GitStats/git_stats.py:180-184, 264-266 | MEDIUM | ✅ Fixed |
+| Unimplemented method | GitStats/git_stats.py:275-298 | MEDIUM | ✅ Fixed |
 
 ### Files Modified Summary
 
@@ -462,11 +472,18 @@ python3 verify_chatsystem.py
 
 ## Backward Compatibility
 
-✅ **All changes are backward compatible:**
+⚠️ **BREAKING CHANGES NOTICE:**
 
-1. GitStats tool now accepts both old and new parameter formats
-2. Default values ensure existing code continues to work
-3. No breaking API changes
+**GitStats Tool API Change (Breaking):**
+- Old parameters `stats_type` and `limit` are NO LONGER supported
+- New parameters: `report_type`, `top_n`, and `recent_days`
+- **Action Required:** Any existing code using GitStats must update to new parameter names
+- This is a necessary breaking change to fix the critical integration bug
+
+**All Other Tools (Non-Breaking):**
+- FileDiff, DataConvert, TodoExtractor, ImportOptimizer, PathSketch: All fixes maintain API compatibility
+- Only the internal command mapping changed, external API parameters remain the same
+- Default values ensure existing code continues to work
 
 ---
 
