@@ -298,7 +298,7 @@ class ToolAdapter:
                         "default": True
                     }
                 },
-                "required": ["command", "path"],
+                "required": ["path"],
                 "additionalProperties": False
             }
         },
@@ -346,7 +346,7 @@ class ToolAdapter:
                         "default": True
                     }
                 },
-                "required": ["path"],
+                "required": [],
                 "additionalProperties": False
             }
         },
