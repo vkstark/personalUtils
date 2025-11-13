@@ -244,16 +244,26 @@ class ToolAdapter:
                         "description": "Path to git repository",
                         "default": "."
                     },
-                    "stats_type": {
+                    "report_type": {
                         "type": "string",
-                        "enum": ["summary", "contributors", "files", "timeline"],
-                        "description": "Type of statistics to generate",
+                        "enum": ["summary", "full", "contributors", "files", "activity", "recent"],
+                        "description": "Type of report to generate: summary (basic stats), full (all sections), contributors (top contributors), files (most changed files), activity (commit heatmap), recent (recent activity)",
                         "default": "summary"
                     },
-                    "limit": {
+                    "top_n": {
                         "type": "integer",
-                        "description": "Limit number of results",
+                        "description": "For contributors/files reports: show top N items (default: 10)",
                         "default": 10
+                    },
+                    "recent_days": {
+                        "type": "integer",
+                        "description": "For recent report: number of days to look back (default: 30)",
+                        "default": 30
+                    },
+                    "no_color": {
+                        "type": "boolean",
+                        "description": "Disable colored output",
+                        "default": True
                     }
                 },
                 "required": ["repo_path"],

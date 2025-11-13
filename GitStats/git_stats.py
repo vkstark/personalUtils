@@ -178,7 +178,10 @@ class GitStats:
                         current_commit['deletions'] += deleted
                         current_commit['files_changed'] += 1
                     except ValueError:
-                        pass
+                        # Skip lines with non-numeric stat values (binary files, etc.)
+                        if self.verbose:
+                            print(f"Skipping non-numeric stats: {line}", file=sys.stderr)
+                        continue
 
         self.stats['total_commits'] = len(self.commit_history)
 
@@ -259,7 +262,8 @@ class GitStats:
                                     deletions += deleted
                                     changes += 1
                                 except ValueError:
-                                    pass
+                                    # Skip binary files or files with non-numeric stats
+                                    continue
 
                     if changes > 0:
                         self.file_stats[filepath] = {
@@ -269,8 +273,29 @@ class GitStats:
                         }
 
     def _calculate_stats(self):
-        """Calculate additional statistics"""
-        pass
+        """Calculate additional statistics and derived metrics"""
+        # Calculate average commits per contributor
+        if self.stats['total_contributors'] > 0:
+            self.stats['avg_commits_per_contributor'] = (
+                self.stats['total_commits'] / self.stats['total_contributors']
+            )
+        else:
+            self.stats['avg_commits_per_contributor'] = 0
+
+        # Calculate average commits per active day
+        if self.stats['active_days'] > 0:
+            self.stats['avg_commits_per_day'] = (
+                self.stats['total_commits'] / self.stats['active_days']
+            )
+        else:
+            self.stats['avg_commits_per_day'] = 0
+
+        # Calculate repository age in days
+        if self.stats['first_commit'] and self.stats['last_commit']:
+            age_days = (self.stats['last_commit'] - self.stats['first_commit']).days
+            self.stats['repo_age_days'] = age_days
+        else:
+            self.stats['repo_age_days'] = 0
 
     def get_summary(self) -> str:
         """Get summary statistics"""

@@ -164,11 +164,26 @@ class ToolExecutor:
 
         elif function_name == "analyze_git_repository":
             cmd.append(args.get("repo_path", "."))
-            if args.get("stats_type"):
-                cmd.extend(["--type", args["stats_type"]])
-            if args.get("limit"):
-                cmd.extend(["--limit", str(args["limit"])])
-            cmd.append("--no-color")
+
+            # Map report_type to appropriate git_stats.py arguments
+            report_type = args.get("report_type", "summary")
+            top_n = args.get("top_n", 10)
+            recent_days = args.get("recent_days", 30)
+
+            if report_type == "full":
+                cmd.append("--full")
+            elif report_type == "contributors":
+                cmd.extend(["--contributors", str(top_n)])
+            elif report_type == "files":
+                cmd.extend(["--files", str(top_n)])
+            elif report_type == "activity":
+                cmd.append("--activity")
+            elif report_type == "recent":
+                cmd.extend(["--recent", str(recent_days)])
+            # "summary" is default - no extra args needed
+
+            if args.get("no_color", True):
+                cmd.append("--no-color")
 
         elif function_name == "optimize_python_imports":
             cmd.append(args["file_path"])
