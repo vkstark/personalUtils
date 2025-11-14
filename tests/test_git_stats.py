@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from GitStats.git_stats import GitStats
+from tools.GitStats.git_stats import GitStats
 
 
 class TestGitStatsBasic:

@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from ChatSystem.core.config import get_settings
 from ChatSystem.core.chat_engine import ChatEngine
 from ChatSystem.tools.tool_registry import ToolRegistry
-from ChatSystem.agent.executor import AgentExecutor
+from agents.task_executor.executor import AgentExecutor
 
 
 def main():

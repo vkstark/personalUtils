@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ImportOptimizer.import_optimizer import ImportAnalyzer
+from tools.ImportOptimizer.import_optimizer import ImportAnalyzer
 
 
 class TestImportAnalyzer:

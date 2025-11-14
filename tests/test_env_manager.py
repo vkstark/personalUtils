@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from EnvManager.env_manager import EnvManager
+from tools.EnvManager.env_manager import EnvManager
 
 
 class TestEnvManager:

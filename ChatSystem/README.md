@@ -99,7 +99,7 @@ response = engine.chat("Analyze the code in ./myproject")
 
 ### Agentic Workflow
 ```python
-from ChatSystem.agent import AgentExecutor
+from agents.task_executor import AgentExecutor
 
 agent = AgentExecutor(chat_engine=engine, max_iterations=5)
 

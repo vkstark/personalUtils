@@ -8,7 +8,7 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from FileDiff.file_diff import FileDiff, DiffMode
+from tools.FileDiff.file_diff import FileDiff, DiffMode
 
 
 class TestFileDiff:
