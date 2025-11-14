@@ -136,7 +136,21 @@ class ToolExecutionResult(BaseModel):
                 "result": self.get_output()
             }
         else:
-            return {
-                "success": False,
-                "error": self.error_message or "Unknown error"
-            }
+            # For manual_required status, preserve the message from stdout/structured_payload
+            # For errors/timeouts, use error_message
+            if self.status == ToolStatus.MANUAL_REQUIRED:
+                message = self.stdout or (
+                    self.structured_payload.get("message", "Manual intervention required")
+                    if self.structured_payload else "Manual intervention required"
+                )
+                return {
+                    "success": False,
+                    "error": message,
+                    "status": self.status.value,
+                    "requires_manual_action": True
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": self.error_message or self.stderr or "Unknown error"
+                }
