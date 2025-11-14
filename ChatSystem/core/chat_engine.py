@@ -11,6 +11,8 @@ from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMe
 
 from .config import Settings, calculate_cost
 from .conversation import ConversationManager
+from .tool_metrics import ToolMetrics
+from ..tools.tool_result import ToolExecutionResult, ToolStatus
 
 
 class ChatEngine:
@@ -51,6 +53,9 @@ class ChatEngine:
             "total_cost": 0.0,
             "tool_calls_made": 0,
         }
+
+        # Tool telemetry - per-tool metrics
+        self.tool_metrics: Dict[str, ToolMetrics] = {}
 
     def register_tools(self, tools: List[Dict[str, Any]], executor: Callable):
         """Register tools for function calling"""
@@ -329,17 +334,26 @@ class ChatEngine:
                     continue
 
                 # Execute tool
-                result = self.tool_executor(function_name, function_args)
+                result: ToolExecutionResult = self.tool_executor(function_name, function_args)
+
+                # Record metrics for this tool
+                if function_name not in self.tool_metrics:
+                    self.tool_metrics[function_name] = ToolMetrics(tool_name=function_name)
+                self.tool_metrics[function_name].record_execution(result)
+
+                # Convert ToolExecutionResult to dict for conversation
+                # Use legacy format for backward compatibility with OpenAI API
+                result_dict = result.to_legacy_dict()
 
                 # Add tool response to conversation
                 self.conversation.add_message(
                     role="tool",
-                    content=json.dumps(result),
+                    content=json.dumps(result_dict),
                     tool_call_id=tool_call.id,
                     name=function_name,
                 )
 
-                tool_results.append(result)
+                tool_results.append(result_dict)
 
             # Get final response from model
             messages = self.conversation.get_messages()
@@ -389,14 +403,26 @@ class ChatEngine:
             self.tool_call_depth -= 1
 
     def get_stats(self) -> Dict[str, Any]:
-        """Get usage statistics"""
+        """
+        Get usage statistics including tool telemetry.
+
+        Returns:
+            Dict containing:
+            - Basic stats (requests, tokens, cost)
+            - Conversation summary
+            - Tool metrics (per-tool success rates, latencies, errors)
+        """
         return {
             **self.stats,
             "conversation_summary": self.conversation.get_summary(),
+            "tool_metrics": {
+                name: metrics.to_dict()
+                for name, metrics in self.tool_metrics.items()
+            }
         }
 
     def reset(self, keep_system: bool = True):
-        """Reset conversation"""
+        """Reset conversation and statistics"""
         self.conversation.clear_history(keep_system=keep_system)
 
         # Reset stats
@@ -407,3 +433,6 @@ class ChatEngine:
             "total_cost": 0.0,
             "tool_calls_made": 0,
         }
+
+        # Reset tool metrics
+        self.tool_metrics = {}

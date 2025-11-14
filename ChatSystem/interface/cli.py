@@ -65,7 +65,7 @@ class ChatCLI:
         current_agent_info = self.agent_manager.get_agent_info(self.agent_manager.current_agent_type)
 
         welcome_text = f"""
-# 🤖 ChatSystem v1.0
+# 🤖 ChatSystem v2.0
 
 **Powered by:** {self.settings.model_name}
 **Current Agent:** {current_agent_info.get('name', 'Unknown')}
@@ -78,6 +78,7 @@ Type your message or try these commands:
 - `/agent` - Switch agent
 - `/tools` - List available tools
 - `/stats` - Show usage statistics
+- `/health` - Tool health dashboard
 - `/clear` - Clear conversation
 - `/exit` - Exit the chat
         """
@@ -96,6 +97,7 @@ Type your message or try these commands:
             ("/agent", "Switch to a different agent"),
             ("/tools", "List all available tools"),
             ("/stats", "Show usage statistics"),
+            ("/health", "Show tool health metrics"),
             ("/context", "Show context window usage"),
             ("/clear", "Clear conversation history"),
             ("/export", "Export conversation to file"),
@@ -153,6 +155,11 @@ Type your message or try these commands:
 
         self.console.print(table)
 
+        # Show tool metrics summary if available
+        tool_metrics = stats.get("tool_metrics", {})
+        if tool_metrics:
+            self.console.print("\n[dim]Use /health to see detailed tool metrics[/dim]")
+
     def display_context_usage(self):
         """Display context window usage"""
         usage = self.conversation.get_context_window_usage()
@@ -200,6 +207,85 @@ Type your message or try these commands:
 
         self.console.print(table)
         self.console.print("\n[dim]Use `/agent <name>` to switch agents[/dim]")
+
+    def display_health(self):
+        """Display tool health metrics"""
+        stats = self.chat_engine.get_stats()
+        tool_metrics = stats.get("tool_metrics", {})
+
+        if not tool_metrics:
+            self.console.print("[yellow]No tool metrics available yet. Tools will appear here after first use.[/yellow]")
+            return
+
+        # Create health table
+        table = Table(title="Tool Health Dashboard", show_header=True, border_style="cyan")
+        table.add_column("Tool", style="cyan", no_wrap=True, width=25)
+        table.add_column("Status", justify="center", width=10)
+        table.add_column("Calls", justify="right", width=8)
+        table.add_column("Success Rate", justify="right", width=13)
+        table.add_column("Avg Latency", justify="right", width=12)
+        table.add_column("Last Error", style="red", width=40)
+
+        # Sort by total calls (most used first)
+        sorted_tools = sorted(
+            tool_metrics.items(),
+            key=lambda x: x[1]["total_calls"],
+            reverse=True
+        )
+
+        for tool_name, metrics in sorted_tools:
+            # Determine health status and color
+            health_status = metrics.get("health_status", "unknown")
+            if health_status == "healthy":
+                status_icon = "[green]✓ Healthy[/green]"
+            elif health_status == "degraded":
+                status_icon = "[yellow]⚠ Degraded[/yellow]"
+            elif health_status == "unhealthy":
+                status_icon = "[red]✗ Unhealthy[/red]"
+            else:
+                status_icon = "[dim]? Unknown[/dim]"
+
+            # Color code success rate
+            success_rate = metrics.get("success_rate", "0.0%")
+            success_val = float(success_rate.rstrip('%'))
+            if success_val >= 90:
+                rate_display = f"[green]{success_rate}[/green]"
+            elif success_val >= 70:
+                rate_display = f"[yellow]{success_rate}[/yellow]"
+            else:
+                rate_display = f"[red]{success_rate}[/red]"
+
+            # Get last error (truncate if too long)
+            last_error = metrics.get("last_error") or ""
+            if len(last_error) > 40:
+                last_error = last_error[:37] + "..."
+
+            table.add_row(
+                tool_name,
+                status_icon,
+                str(metrics.get("total_calls", 0)),
+                rate_display,
+                metrics.get("avg_duration", "N/A"),
+                last_error
+            )
+
+        self.console.print(table)
+
+        # Show summary statistics
+        total_tools_used = len(tool_metrics)
+        healthy_tools = sum(1 for m in tool_metrics.values() if m.get("health_status") == "healthy")
+        degraded_tools = sum(1 for m in tool_metrics.values() if m.get("health_status") == "degraded")
+        unhealthy_tools = sum(1 for m in tool_metrics.values() if m.get("health_status") == "unhealthy")
+
+        summary = f"\n[cyan]Summary:[/cyan] {total_tools_used} tools used"
+        if healthy_tools > 0:
+            summary += f" | [green]{healthy_tools} healthy[/green]"
+        if degraded_tools > 0:
+            summary += f" | [yellow]{degraded_tools} degraded[/yellow]"
+        if unhealthy_tools > 0:
+            summary += f" | [red]{unhealthy_tools} unhealthy[/red]"
+
+        self.console.print(summary)
 
     def switch_agent(self, agent_name: Optional[str] = None):
         """Switch to a different agent"""
@@ -276,6 +362,9 @@ Type your message or try these commands:
 
         elif cmd == "/stats":
             self.display_stats()
+
+        elif cmd == "/health":
+            self.display_health()
 
         elif cmd == "/context":
             self.display_context_usage()
