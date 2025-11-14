@@ -64,8 +64,12 @@ class ChatEngine:
         stream: Optional[bool] = None,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
-    ) -> str:
-        """Send a chat message and get response"""
+    ):
+        """Send a chat message and get response
+
+        Returns:
+            str if stream=False, otherwise Iterator[str] for streaming
+        """
 
         # Add user message to conversation
         self.conversation.add_message(role="user", content=message)
@@ -78,22 +82,10 @@ class ChatEngine:
 
         # Check if streaming
         if stream:
-            # Streaming response
-            full_response = ""
-            had_tool_calls = False
-
-            for chunk, is_tool_response in self._chat_stream(model, max_tokens, temperature):
-                full_response += chunk
-                had_tool_calls = is_tool_response
-                yield chunk
-
-            # Add assistant response only if tools weren't used
-            # Tool handling adds its own messages to the conversation
-            if not had_tool_calls and full_response:
-                self.conversation.add_message(role="assistant", content=full_response)
-
+            # Streaming response - return generator
+            return self._chat_generator(model, max_tokens, temperature)
         else:
-            # Non-streaming response
+            # Non-streaming response - return string directly
             response, tool_calls_handled = self._chat_completion(model, max_tokens, temperature)
 
             # Add assistant response only if tools weren't used
@@ -101,7 +93,22 @@ class ChatEngine:
             if not tool_calls_handled and response:
                 self.conversation.add_message(role="assistant", content=response)
 
-            yield response
+            return response
+
+    def _chat_generator(self, model: str, max_tokens: int, temperature: float) -> Iterator[str]:
+        """Generator for streaming responses"""
+        full_response = ""
+        had_tool_calls = False
+
+        for chunk, is_tool_response in self._chat_stream(model, max_tokens, temperature):
+            full_response += chunk
+            had_tool_calls = is_tool_response
+            yield chunk
+
+        # Add assistant response only if tools weren't used
+        # Tool handling adds its own messages to the conversation
+        if not had_tool_calls and full_response:
+            self.conversation.add_message(role="assistant", content=full_response)
 
     def _chat_completion(
         self, model: str, max_tokens: int, temperature: float
@@ -115,13 +122,25 @@ class ChatEngine:
 
         messages = self.conversation.get_messages()
 
+        # Reasoning models (o1, o3 series) have different parameter requirements
+        reasoning_models = ["o1-preview", "o1-mini", "o3", "o3-mini"]
+        is_reasoning_model = any(model.startswith(rm) for rm in reasoning_models)
+
         # Prepare API call parameters
         params = {
             "model": model,
             "messages": messages,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
         }
+
+        # Reasoning models don't support temperature parameter
+        if not is_reasoning_model:
+            params["temperature"] = temperature
+
+        # Reasoning models use max_completion_tokens instead of max_tokens
+        if is_reasoning_model:
+            params["max_completion_tokens"] = max_tokens
+        else:
+            params["max_tokens"] = max_tokens
 
         # Add tools if available and enabled
         if self.tools and self.settings.enable_tools:
@@ -167,14 +186,26 @@ class ChatEngine:
 
         messages = self.conversation.get_messages()
 
+        # Reasoning models (o1, o3 series) have different parameter requirements
+        reasoning_models = ["o1-preview", "o1-mini", "o3", "o3-mini"]
+        is_reasoning_model = any(model.startswith(rm) for rm in reasoning_models)
+
         # Prepare API call parameters
         params = {
             "model": model,
             "messages": messages,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
             "stream": True,
         }
+
+        # Reasoning models don't support temperature parameter
+        if not is_reasoning_model:
+            params["temperature"] = temperature
+
+        # Reasoning models use max_completion_tokens instead of max_tokens
+        if is_reasoning_model:
+            params["max_completion_tokens"] = max_tokens
+        else:
+            params["max_tokens"] = max_tokens
 
         # Add tools if available and enabled
         if self.tools and self.settings.enable_tools:
@@ -311,12 +342,27 @@ class ChatEngine:
             # Get final response from model
             messages = self.conversation.get_messages()
 
-            response: ChatCompletion = self.client.chat.completions.create(
-                model=model,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
+            # Reasoning models (o1, o3 series) have different parameter requirements
+            reasoning_models = ["o1-preview", "o1-mini", "o3", "o3-mini"]
+            is_reasoning_model = any(model.startswith(rm) for rm in reasoning_models)
+
+            # Prepare params for tool call response
+            tool_params = {
+                "model": model,
+                "messages": messages,
+            }
+
+            # Reasoning models don't support temperature parameter
+            if not is_reasoning_model:
+                tool_params["temperature"] = temperature
+
+            # Reasoning models use max_completion_tokens instead of max_tokens
+            if is_reasoning_model:
+                tool_params["max_completion_tokens"] = max_tokens
+            else:
+                tool_params["max_tokens"] = max_tokens
+
+            response: ChatCompletion = self.client.chat.completions.create(**tool_params)
 
             # Update statistics
             if response.usage:
