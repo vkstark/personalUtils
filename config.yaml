@@ -32,35 +32,55 @@ agent:
   # Default agent to use (task_executor, transcript_analyzer, trillionaire_futurist, framework_teacher)
   default_agent: task_executor
 
-# Agent-specific configurations
+# Agent-specific configurations (Version 1.2)
 agents:
   task_executor:
     max_iterations: 5
-    enable_planning: true
-    enable_reasoning: true
-    model: o3-mini
+    enable_planning: true          # Use LLM-backed planning for complex tasks
+    enable_reasoning: true          # Track reasoning traces
+    model: o3-mini                  # Model for this agent
     timeout_seconds: 300
+    persist_reasoning: true         # Save reasoning traces to conversation
+    auto_summarize: true            # Auto-summarize when approaching token limits
+    summarize_threshold: 0.85       # Trigger summarization at 85% token usage
 
   transcript_analyzer:
     max_iterations: 3
-    enable_planning: false
+    enable_planning: false          # Single-pass analysis, no planning needed
     enable_reasoning: true
-    model: o3-mini  # Use reasoning model for deep analysis
-    timeout_seconds: 600  # Longer timeout for comprehensive analysis
+    model: o3-mini                  # Use reasoning model for deep analysis
+    timeout_seconds: 600
+    persist_reasoning: true
+    auto_summarize: true
+    summarize_threshold: 0.80
 
   trillionaire_futurist:
     max_iterations: 5
-    enable_planning: true
+    enable_planning: true           # Strategic planning enabled
     enable_reasoning: true
-    model: o3-mini  # Use reasoning model for strategic thinking
-    timeout_seconds: 600  # Longer timeout for strategic analysis
+    model: o3-mini                  # Use reasoning model for strategic thinking
+    timeout_seconds: 600
+    persist_reasoning: true
+    auto_summarize: true
+    summarize_threshold: 0.85
 
   framework_teacher:
     max_iterations: 3
-    enable_planning: false
+    enable_planning: false          # Teaching through frameworks, not multi-step
     enable_reasoning: true
-    model: o3-mini  # Use reasoning model for framework development
+    model: o3-mini                  # Use reasoning model for framework development
     timeout_seconds: 300
+    persist_reasoning: true
+    auto_summarize: true
+    summarize_threshold: 0.80
+
+# Conversation management
+conversation:
+  auto_save_history: true
+  auto_summarize_enabled: true
+  summarize_threshold: 0.85        # Default threshold for all agents
+  summarize_target_ratio: 0.6      # Compress to 60% of original size
+  max_tokens_default: 128000       # Default context window size
 
 cli:
   theme: monokai

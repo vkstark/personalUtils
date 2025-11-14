@@ -99,6 +99,8 @@ Type your message or try these commands:
             ("/stats", "Show usage statistics"),
             ("/health", "Show tool health metrics"),
             ("/context", "Show context window usage"),
+            ("/show_reasoning", "Display reasoning trace from last task"),
+            ("/summarize", "Manually trigger conversation summarization"),
             ("/clear", "Clear conversation history"),
             ("/export", "Export conversation to file"),
             ("/model", "Change model"),
@@ -287,6 +289,70 @@ Type your message or try these commands:
 
         self.console.print(summary)
 
+    def display_reasoning_trace(self):
+        """Display reasoning trace from the current agent (if available)"""
+        # Check if current agent has reasoning capabilities
+        if hasattr(self.agent, 'get_reasoning_trace'):
+            try:
+                trace = self.agent.get_reasoning_trace(include_metadata=True)
+
+                if trace and "🧠 Reasoning Trace" in trace:
+                    panel = Panel(
+                        trace,
+                        title="🧠 Reasoning Trace",
+                        border_style="magenta",
+                        expand=False
+                    )
+                    self.console.print(panel)
+                else:
+                    self.console.print("[yellow]No reasoning trace available. Execute a task first.[/yellow]")
+
+            except Exception as e:
+                self.console.print(f"[red]Error retrieving reasoning trace:[/red] {e}")
+        else:
+            self.console.print("[yellow]Current agent does not support reasoning traces.[/yellow]")
+
+    def summarize_conversation(self):
+        """Manually trigger conversation summarization"""
+        usage = self.conversation.get_context_window_usage()
+        current_tokens = usage["total_tokens"]
+        max_tokens = usage["max_tokens"]
+        usage_percent = usage["usage_percent"]
+
+        self.console.print(f"\n[cyan]Current token usage:[/cyan] {current_tokens:,} / {max_tokens:,} ({usage_percent:.1f}%)")
+
+        if usage_percent < 30:
+            self.console.print("[yellow]Warning: Conversation is quite short. Summarization may not be beneficial.[/yellow]")
+
+        if not Confirm.ask("Proceed with summarization?", default=True):
+            return
+
+        try:
+            with self.console.status("[cyan]Generating summary...", spinner="dots"):
+                summary = self.conversation.summarize_conversation(
+                    chat_engine=self.chat_engine,
+                    target_ratio=0.6
+                )
+
+            # Show new token usage
+            new_usage = self.conversation.get_context_window_usage()
+            saved_tokens = current_tokens - new_usage["total_tokens"]
+            saved_percent = (saved_tokens / current_tokens * 100) if current_tokens > 0 else 0
+
+            panel = Panel(
+                f"[green]✓[/green] Conversation summarized!\n\n"
+                f"[cyan]Before:[/cyan] {current_tokens:,} tokens ({usage_percent:.1f}%)\n"
+                f"[cyan]After:[/cyan] {new_usage['total_tokens']:,} tokens ({new_usage['usage_percent']:.1f}%)\n"
+                f"[green]Saved:[/green] {saved_tokens:,} tokens ({saved_percent:.1f}%)\n\n"
+                f"[dim]{summary[:300]}{'...' if len(summary) > 300 else ''}[/dim]",
+                title="Summarization Complete",
+                border_style="green"
+            )
+            self.console.print(panel)
+
+        except Exception as e:
+            self.console.print(f"[red]Error during summarization:[/red] {e}")
+
     def switch_agent(self, agent_name: Optional[str] = None):
         """Switch to a different agent"""
         if not agent_name:
@@ -368,6 +434,12 @@ Type your message or try these commands:
 
         elif cmd == "/context":
             self.display_context_usage()
+
+        elif cmd == "/show_reasoning":
+            self.display_reasoning_trace()
+
+        elif cmd == "/summarize":
+            self.summarize_conversation()
 
         elif cmd == "/clear":
             if Confirm.ask("Clear conversation history?"):

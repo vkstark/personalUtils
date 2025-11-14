@@ -429,3 +429,153 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             "started_at": self.messages[0].timestamp if self.messages else None,
             "last_message_at": self.messages[-1].timestamp if self.messages else None,
         }
+
+    def summarize_conversation(self, chat_engine=None, target_ratio: float = 0.5) -> str:
+        """
+        Summarize the conversation to reduce token usage.
+
+        This method uses an LLM to create a concise summary of the conversation
+        history, replacing older messages with a summary while keeping recent
+        messages intact.
+
+        Args:
+            chat_engine: Optional ChatEngine to use for summarization.
+                If None, creates a summary without LLM (structural only).
+            target_ratio (float): Target ratio of original tokens to keep (0.0 to 1.0).
+                Default 0.5 means compress to ~50% of current size.
+
+        Returns:
+            str: The summary text that was created
+        """
+        if not self.messages:
+            return "No messages to summarize"
+
+        # Keep system messages and recent messages
+        system_messages = [m for m in self.messages if m.role == "system"]
+        other_messages = [m for m in self.messages if m.role != "system"]
+
+        if len(other_messages) < 5:
+            # Too few messages to summarize meaningfully
+            return "Conversation too short to summarize"
+
+        # Calculate current token count
+        current_tokens = self.count_tokens()
+        target_tokens = int(current_tokens * target_ratio)
+
+        # Determine split point - keep recent 30% of messages, summarize the rest
+        keep_recent_count = max(3, int(len(other_messages) * 0.3))
+        messages_to_summarize = other_messages[:-keep_recent_count]
+        messages_to_keep = other_messages[-keep_recent_count:]
+
+        if chat_engine:
+            # Use LLM to create intelligent summary
+            summary_text = self._llm_summarize(chat_engine, messages_to_summarize)
+        else:
+            # Create structural summary without LLM
+            summary_text = self._structural_summarize(messages_to_summarize)
+
+        # Create summary message
+        summary_message = Message(
+            role="system",
+            content=f"[Conversation Summary - {len(messages_to_summarize)} messages compressed]\n{summary_text}"
+        )
+
+        # Replace messages with summary + kept messages
+        self.messages = system_messages + [summary_message] + messages_to_keep
+
+        if self.auto_save:
+            self._save_history()
+
+        return summary_text
+
+    def _llm_summarize(self, chat_engine, messages: List[Message]) -> str:
+        """
+        Use LLM to create an intelligent summary of messages.
+
+        Args:
+            chat_engine: ChatEngine to use for summarization
+            messages: Messages to summarize
+
+        Returns:
+            Summary text
+        """
+        # Build conversation text
+        conversation_text = []
+        for msg in messages:
+            role_label = msg.role.upper()
+            content = msg.content or "[tool call]"
+            conversation_text.append(f"[{role_label}] {content[:500]}")
+
+        # Create summarization prompt
+        prompt = f"""Summarize the following conversation concisely, preserving key information, decisions, and context:
+
+{chr(10).join(conversation_text)}
+
+Provide a concise summary in 3-5 paragraphs that captures:
+1. Main topics discussed
+2. Key decisions or conclusions
+3. Important facts or data mentioned
+4. Any ongoing tasks or action items"""
+
+        # Get summary from LLM (disable tools for this)
+        response_parts = []
+        for chunk in chat_engine.chat(prompt, stream=False):
+            response_parts.append(chunk)
+
+        return "".join(response_parts)
+
+    def _structural_summarize(self, messages: List[Message]) -> str:
+        """
+        Create a structural summary without using LLM.
+
+        Args:
+            messages: Messages to summarize
+
+        Returns:
+            Summary text
+        """
+        summary_lines = []
+        summary_lines.append(f"Summarized {len(messages)} messages:")
+
+        # Count by role
+        role_counts = {}
+        for msg in messages:
+            role_counts[msg.role] = role_counts.get(msg.role, 0) + 1
+
+        summary_lines.append(f"  - User messages: {role_counts.get('user', 0)}")
+        summary_lines.append(f"  - Assistant messages: {role_counts.get('assistant', 0)}")
+        summary_lines.append(f"  - Tool messages: {role_counts.get('tool', 0)}")
+
+        # Include first and last message snippets
+        if messages:
+            first_msg = messages[0]
+            last_msg = messages[-1]
+
+            if first_msg.content:
+                summary_lines.append(f"\nFirst message: {first_msg.content[:200]}...")
+            if last_msg.content:
+                summary_lines.append(f"Last message: {last_msg.content[:200]}...")
+
+        return "\n".join(summary_lines)
+
+    def auto_summarize_if_needed(self, chat_engine=None, threshold: float = 0.85) -> bool:
+        """
+        Automatically summarize conversation if token usage exceeds threshold.
+
+        Args:
+            chat_engine: Optional ChatEngine for LLM-based summarization
+            threshold (float): Token usage threshold (0.0 to 1.0) to trigger summarization.
+                Default 0.85 means summarize at 85% capacity.
+
+        Returns:
+            bool: True if summarization was performed, False otherwise
+        """
+        usage = self.get_context_window_usage()
+        usage_ratio = usage["total_tokens"] / usage["max_tokens"]
+
+        if usage_ratio >= threshold:
+            # Trigger summarization
+            self.summarize_conversation(chat_engine=chat_engine, target_ratio=0.6)
+            return True
+
+        return False
