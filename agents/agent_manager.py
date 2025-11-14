@@ -96,11 +96,24 @@ class AgentManager:
         Args:
             agent_type: The type of agent to get
             chat_engine: Optional chat engine (creates new if not provided)
+                        If provided for a cached agent, updates the agent's chat engine
 
         Returns:
             The requested agent instance
         """
-        # Return cached agent if available
+        # If agent exists and a new chat_engine is provided, update the cached agent's engine
+        if agent_type in self.agents and chat_engine is not None:
+            agent = self.agents[agent_type]
+            agent.chat_engine = chat_engine
+
+            # Re-add the system persona to the new chat engine's conversation
+            # This is critical because the new engine has a fresh conversation without the persona
+            if hasattr(agent, 'SYSTEM_PERSONA'):
+                agent.chat_engine.conversation.add_message("system", agent.SYSTEM_PERSONA)
+
+            return agent
+
+        # Return cached agent if available and no new chat_engine provided
         if agent_type in self.agents:
             return self.agents[agent_type]
 

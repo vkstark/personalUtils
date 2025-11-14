@@ -381,13 +381,14 @@ Begin every analysis by carefully reading the transcript multiple times, then pr
 Provide your complete analysis report following the structured format."""
 
         # Use the chat engine to generate analysis
-        response = self.chat_engine.chat(
+        response_gen = self.chat_engine.chat(
             message=analysis_prompt,
             stream=False,
             model=self.settings.get_model_for_task("reasoning")
         )
 
-        return response
+        # Consume the iterator (single yield for non-streaming)
+        return "".join(response_gen)
 
     def quick_summary(self, transcript: str) -> Dict[str, Any]:
         """
@@ -410,10 +411,13 @@ Keep it brief and punchy.
 {transcript}
 ---TRANSCRIPT END---"""
 
-        response = self.chat_engine.chat(
+        response_gen = self.chat_engine.chat(
             message=summary_prompt,
             stream=False,
             model=self.settings.get_model_for_task("general")
         )
+
+        # Consume the iterator (single yield for non-streaming)
+        response = "".join(response_gen)
 
         return {"summary": response}

@@ -392,13 +392,14 @@ by upgrading how they think, learn, decide, and build – one framework at a tim
             Strategic response with data, frameworks, and action plans
         """
         # Use the chat engine to generate response
-        response = self.chat_engine.chat(
+        response_gen = self.chat_engine.chat(
             message=user_input,
             stream=False,
             model=self.settings.get_model_for_task("reasoning")
         )
 
-        return response
+        # Consume the iterator (single yield for non-streaming)
+        return "".join(response_gen)
 
     def analyze_opportunity(self, opportunity_description: str) -> Dict[str, Any]:
         """
@@ -426,10 +427,13 @@ Provide:
 
 Be specific, quantified, and action-oriented."""
 
-        response = self.chat_engine.chat(
+        response_gen = self.chat_engine.chat(
             message=analysis_prompt,
             stream=False,
             model=self.settings.get_model_for_task("reasoning")
         )
+
+        # Consume the iterator (single yield for non-streaming)
+        response = "".join(response_gen)
 
         return {"analysis": response}
