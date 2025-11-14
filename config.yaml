@@ -29,6 +29,39 @@ agent:
   enable_reasoning: true
   timeout_seconds: 300
 
+  # Default agent to use (task_executor, transcript_analyzer, trillionaire_futurist, framework_teacher)
+  default_agent: task_executor
+
+# Agent-specific configurations
+agents:
+  task_executor:
+    max_iterations: 5
+    enable_planning: true
+    enable_reasoning: true
+    model: o3-mini
+    timeout_seconds: 300
+
+  transcript_analyzer:
+    max_iterations: 3
+    enable_planning: false
+    enable_reasoning: true
+    model: o3-mini  # Use reasoning model for deep analysis
+    timeout_seconds: 600  # Longer timeout for comprehensive analysis
+
+  trillionaire_futurist:
+    max_iterations: 5
+    enable_planning: true
+    enable_reasoning: true
+    model: o3-mini  # Use reasoning model for strategic thinking
+    timeout_seconds: 600  # Longer timeout for strategic analysis
+
+  framework_teacher:
+    max_iterations: 3
+    enable_planning: false
+    enable_reasoning: true
+    model: o3-mini  # Use reasoning model for framework development
+    timeout_seconds: 300
+
 cli:
   theme: monokai
   show_timestamps: true

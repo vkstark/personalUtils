@@ -18,7 +18,7 @@ from ..core.config import Settings, get_settings
 from ..core.chat_engine import ChatEngine
 from ..core.conversation import ConversationManager
 from ..tools.tool_registry import ToolRegistry
-from agents.task_executor.executor import AgentExecutor
+from agents.agent_manager import AgentManager, AgentType
 
 
 class ChatCLI:
@@ -48,25 +48,34 @@ class ChatCLI:
         executor = self.tool_registry.get_tool_executor()
         self.chat_engine.register_tools(tools, executor)
 
-        # Initialize agent
+        # Initialize agent manager
+        self.agent_manager = AgentManager(settings=self.settings)
+
+        # Get default agent from config
         agent_config = self.settings.get_agent_config()
-        self.agent = AgentExecutor(
-            chat_engine=self.chat_engine,
-            settings=self.settings,
-            max_iterations=agent_config["max_iterations"],
-        )
+        default_agent_name = agent_config.get("default_agent", "task_executor")
+        default_agent_type = AgentManager.parse_agent_type(default_agent_name) or AgentType.TASK_EXECUTOR
+
+        # Set current agent
+        self.agent_manager.set_current_agent(default_agent_type, chat_engine=self.chat_engine)
+        self.agent = self.agent_manager.get_current_agent()
 
     def display_welcome(self):
         """Display welcome message"""
+        current_agent_info = self.agent_manager.get_agent_info(self.agent_manager.current_agent_type)
+
         welcome_text = f"""
 # 🤖 ChatSystem v1.0
 
 **Powered by:** {self.settings.model_name}
+**Current Agent:** {current_agent_info.get('name', 'Unknown')}
 **Tools Available:** {len(self.tool_registry.tools)}
 **Context:** {self.settings.max_tokens:,} tokens
 
 Type your message or try these commands:
 - `/help` - Show available commands
+- `/agents` - List available agents
+- `/agent` - Switch agent
 - `/tools` - List available tools
 - `/stats` - Show usage statistics
 - `/clear` - Clear conversation
@@ -83,6 +92,8 @@ Type your message or try these commands:
 
         commands = [
             ("/help", "Show this help message"),
+            ("/agents", "List all available agents"),
+            ("/agent", "Switch to a different agent"),
             ("/tools", "List all available tools"),
             ("/stats", "Show usage statistics"),
             ("/context", "Show context window usage"),
@@ -165,10 +176,87 @@ Type your message or try these commands:
         self.console.print(f"\n[cyan]Tokens:[/cyan] {usage['total_tokens']:,} / {usage['max_tokens']:,}")
         self.console.print(f"[cyan]Remaining:[/cyan] {usage['remaining_tokens']:,}")
 
+    def display_agents(self):
+        """Display available agents"""
+        table = Table(title="Available Agents", show_header=True, border_style="cyan")
+        table.add_column("Agent", style="cyan", no_wrap=True, width=25)
+        table.add_column("Description", style="white", width=40)
+        table.add_column("Use Cases", style="yellow", width=35)
+
+        agents_info = self.agent_manager.list_agents()
+        current_agent = self.agent_manager.current_agent_type.value
+
+        for agent_type, info in agents_info.items():
+            # Mark current agent
+            agent_name = f"[bold green]✓ {info['name']}[/bold green]" if agent_type == current_agent else info['name']
+            short_name = f"({info['short_name']})"
+            use_cases = "\n".join([f"• {uc}" for uc in info['use_cases'][:2]])  # Show first 2
+
+            table.add_row(
+                f"{agent_name}\n{short_name}",
+                info['description'],
+                use_cases
+            )
+
+        self.console.print(table)
+        self.console.print("\n[dim]Use `/agent <name>` to switch agents[/dim]")
+
+    def switch_agent(self, agent_name: Optional[str] = None):
+        """Switch to a different agent"""
+        if not agent_name:
+            # Show current agent and prompt for selection
+            current_info = self.agent_manager.get_agent_info(self.agent_manager.current_agent_type)
+            self.console.print(f"\n[cyan]Current agent:[/cyan] {current_info['name']} ({current_info['short_name']})")
+            agent_name = Prompt.ask("\nEnter agent name or short name")
+
+        # Parse agent type
+        agent_type = AgentManager.parse_agent_type(agent_name)
+
+        if not agent_type:
+            self.console.print(f"[red]Unknown agent:[/red] {agent_name}")
+            self.console.print("Use [cyan]/agents[/cyan] to see available agents")
+            return
+
+        # Switch agent
+        try:
+            # Create new chat engine for the new agent to avoid persona mixing
+            new_conversation = ConversationManager(
+                model=self.settings.model_name,
+                max_tokens=self.settings.max_tokens,
+            )
+
+            new_chat_engine = ChatEngine(
+                settings=self.settings,
+                conversation=new_conversation,
+            )
+
+            # Register tools with new chat engine
+            tools = self.tool_registry.get_tools()
+            executor = self.tool_registry.get_tool_executor()
+            new_chat_engine.register_tools(tools, executor)
+
+            # Set new agent
+            self.agent_manager.set_current_agent(agent_type, chat_engine=new_chat_engine)
+            self.agent = self.agent_manager.get_current_agent()
+
+            # Update chat engine and conversation
+            self.chat_engine = new_chat_engine
+            self.conversation = new_conversation
+
+            agent_info = self.agent_manager.get_agent_info(agent_type)
+            self.console.print(f"\n[green]✓ Switched to:[/green] {agent_info['name']}")
+            self.console.print(f"[dim]{agent_info['description']}[/dim]\n")
+
+        except Exception as e:
+            self.console.print(f"[red]Error switching agent:[/red] {str(e)}")
+
     def handle_command(self, command: str) -> bool:
         """Handle special commands. Returns True if should continue, False to exit"""
 
         cmd = command.lower().strip()
+        parts = command.strip().split(maxsplit=1)
+        base_cmd = parts[0].lower()
+        cmd_arg = parts[1] if len(parts) > 1 else None
 
         if cmd in ["/exit", "/quit", "/q"]:
             self.console.print("\n[yellow]Goodbye! 👋[/yellow]\n")
@@ -176,6 +264,12 @@ Type your message or try these commands:
 
         elif cmd == "/help":
             self.display_help()
+
+        elif cmd == "/agents":
+            self.display_agents()
+
+        elif base_cmd == "/agent":
+            self.switch_agent(cmd_arg)
 
         elif cmd == "/tools":
             self.display_tools()
