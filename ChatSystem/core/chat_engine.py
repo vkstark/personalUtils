@@ -68,7 +68,7 @@ class ChatEngine:
         """Send a chat message and get response
 
         Returns:
-            str if stream=False, otherwise Iterator[str] for streaming
+            Iterator[str]: Generator yielding response chunks (both streaming and non-streaming)
         """
 
         # Add user message to conversation
@@ -85,7 +85,7 @@ class ChatEngine:
             # Streaming response - return generator
             return self._chat_generator(model, max_tokens, temperature)
         else:
-            # Non-streaming response - return string directly
+            # Non-streaming response - yield complete response as single chunk for backward compatibility
             response, tool_calls_handled = self._chat_completion(model, max_tokens, temperature)
 
             # Add assistant response only if tools weren't used
@@ -93,7 +93,8 @@ class ChatEngine:
             if not tool_calls_handled and response:
                 self.conversation.add_message(role="assistant", content=response)
 
-            return response
+            # Yield the response as a generator for backward compatibility
+            yield response
 
     def _chat_generator(self, model: str, max_tokens: int, temperature: float) -> Iterator[str]:
         """Generator for streaming responses"""

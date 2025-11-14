@@ -503,11 +503,12 @@ You are a FRAMEWORK ENGINE that manufactures better thinkers.
             Framework-based teaching response
         """
         # Use the chat engine to generate teaching response
-        response = self.chat_engine.chat(
+        response_gen = self.chat_engine.chat(
             message=user_request,
             stream=False,
             model=self.settings.get_model_for_task("reasoning")
         )
+        response = "".join(response_gen)
 
         return response
 
@@ -532,11 +533,12 @@ You are a FRAMEWORK ENGINE that manufactures better thinkers.
 3. When to use it
 4. Difficulty level (Beginner/Intermediate/Advanced)"""
 
-        response = self.chat_engine.chat(
+        response_gen = self.chat_engine.chat(
             message=list_prompt,
             stream=False,
             model=self.settings.get_model_for_task("general")
         )
+        response = "".join(response_gen)
 
         return response
 
@@ -559,10 +561,11 @@ Just provide:
 
 Be concise - max 200 words."""
 
-        response = self.chat_engine.chat(
+        response_gen = self.chat_engine.chat(
             message=quick_prompt,
             stream=False,
             model=self.settings.get_model_for_task("general")
         )
+        response = "".join(response_gen)
 
         return response

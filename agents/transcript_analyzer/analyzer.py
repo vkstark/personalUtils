@@ -381,11 +381,12 @@ Begin every analysis by carefully reading the transcript multiple times, then pr
 Provide your complete analysis report following the structured format."""
 
         # Use the chat engine to generate analysis
-        response = self.chat_engine.chat(
+        response_gen = self.chat_engine.chat(
             message=analysis_prompt,
             stream=False,
             model=self.settings.get_model_for_task("reasoning")
         )
+        response = "".join(response_gen)
 
         return response
 
@@ -410,10 +411,11 @@ Keep it brief and punchy.
 {transcript}
 ---TRANSCRIPT END---"""
 
-        response = self.chat_engine.chat(
+        response_gen = self.chat_engine.chat(
             message=summary_prompt,
             stream=False,
             model=self.settings.get_model_for_task("general")
         )
+        response = "".join(response_gen)
 
         return {"summary": response}
