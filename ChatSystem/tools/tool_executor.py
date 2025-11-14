@@ -79,9 +79,6 @@ class ToolExecutor:
             It includes a "success" flag and either a "result" or "error" key.
         """
 
-        Returns:
-            ToolExecutionResult: Structured execution result
-        """
         start_time = time.time()
 
         # Check if function exists
@@ -121,8 +118,8 @@ class ToolExecutor:
             )
 
     def _execute_utility(
-        self, function_name: str, script_path: Path, args: Dict[str, Any]
-    ) -> str:
+        self, function_name: str, script_path: Path, args: Dict[str, Any], start_time: float
+    ) -> ToolExecutionResult:
         """
         Constructs and executes the command-line instruction for a specific utility.
 
@@ -134,10 +131,11 @@ class ToolExecutor:
             function_name (str): The name of the function being executed.
             script_path (Path): The path to the Python script for the utility.
             args (Dict[str, Any]): The arguments for the utility.
+            start_time (float): The timestamp when execution started, used to calculate duration.
 
         Returns:
-            str: The output from the utility's execution (from stdout or stderr),
-            or an error message if the execution fails.
+            ToolExecutionResult: A structured result object containing execution status,
+            output, error information, and metadata.
         """
 
         # Build command line arguments based on function
