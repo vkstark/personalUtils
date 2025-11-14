@@ -7,7 +7,13 @@ from typing import Dict, Any, List, Optional
 
 
 class ToolAdapter:
-    """Adapts personalUtils into OpenAI function format"""
+    """
+    Adapts and provides tool definitions in the format required by OpenAI's
+    function calling API.
+
+    This class serves as a static container for the definitions of all available
+    tools, providing methods to retrieve them in the appropriate format.
+    """
 
     # Tool definitions for all 12 utilities
     TOOL_DEFINITIONS = {
@@ -408,13 +414,15 @@ class ToolAdapter:
     @classmethod
     def get_all_tools(cls) -> List[Dict[str, Any]]:
         """
-        Get all available tools in OpenAI function calling format.
-        
+        Retrieves all available tools in the OpenAI function calling format.
+
+        This method iterates through the `TOOL_DEFINITIONS` and formats each one
+        as a dictionary that is compatible with the OpenAI API.
+
         Returns:
-            List[Dict[str, Any]]: A list of tool definitions compatible with OpenAI's 
-                                   chat completions API. Each tool contains:
-                                   - type: Always "function"
-                                   - function: Object with name, description, and parameters
+            List[Dict[str, Any]]: A list of tool definitions. Each tool is a
+            dictionary with a "type" of "function" and a "function" object
+            containing the name, description, and parameters.
         """
         tools = []
 
@@ -435,13 +443,15 @@ class ToolAdapter:
     @classmethod
     def get_tool_by_name(cls, name: str) -> Optional[Dict[str, Any]]:
         """
-        Get a specific tool definition by its function name.
-        
+        Retrieves a specific tool definition by its function name.
+
         Args:
-            name (str): The function name of the tool to retrieve
-            
+            name (str): The function name of the tool to retrieve (e.g.,
+                "analyze_python_code").
+
         Returns:
-            Optional[Dict[str, Any]]: The tool definition in OpenAI format, or None if not found
+            Optional[Dict[str, Any]]: The tool definition in OpenAI format if
+            found, otherwise None.
         """
         for util_name, definition in cls.TOOL_DEFINITIONS.items():
             if definition["name"] == name:
@@ -458,13 +468,18 @@ class ToolAdapter:
     @classmethod
     def get_enabled_tools(cls, enabled_utils: List[str]) -> List[Dict[str, Any]]:
         """
-        Get only the tools that are enabled based on the provided utility names.
-        
+        Filters and retrieves the definitions for a specified list of enabled tools.
+
+        This method is used to get the OpenAI-formatted definitions for only the
+        tools that are enabled in the application's configuration.
+
         Args:
-            enabled_utils (List[str]): List of utility names to include (e.g., ["CodeWhisper", "APITester"])
-            
+            enabled_utils (List[str]): A list of the names of the utilities
+                to include (e.g., ["CodeWhisper", "APITester"]).
+
         Returns:
-            List[Dict[str, Any]]: A filtered list of tool definitions in OpenAI format
+            List[Dict[str, Any]]: A filtered list of tool definitions in the
+            OpenAI format.
         """
         tools = []
 

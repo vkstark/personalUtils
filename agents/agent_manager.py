@@ -27,8 +27,19 @@ class AgentType(Enum):
 
 class AgentManager:
     """
-    Manages multiple AI agents and provides unified interface for agent selection
+    Manages multiple AI agents, providing a unified interface for their selection
     and execution.
+
+    This class acts as a factory and registry for all specialized agents within
+    the system. It allows for dynamic switching between agents and centralizes
+    agent configuration and instantiation.
+
+    Attributes:
+        settings (Settings): The application settings object.
+        agents (Dict[AgentType, Any]): A cache of instantiated agents.
+        current_agent_type (Optional[AgentType]): The type of the currently
+            active agent.
+        current_agent (Optional[Any]): The instance of the currently active agent.
     """
 
     AGENT_DESCRIPTIONS = {
@@ -79,10 +90,11 @@ class AgentManager:
 
     def __init__(self, settings: Optional[Settings] = None):
         """
-        Initialize the Agent Manager.
+        Initializes the AgentManager.
 
         Args:
-            settings: Optional settings object (will create default if not provided)
+            settings (Optional[Settings], optional): An instance of the Settings
+                class. If None, default settings are loaded. Defaults to None.
         """
         self.settings = settings or Settings()
         self.agents: Dict[AgentType, Any] = {}
@@ -91,15 +103,19 @@ class AgentManager:
 
     def get_agent(self, agent_type: AgentType, chat_engine: Optional[ChatEngine] = None) -> Any:
         """
-        Get or create an agent of the specified type.
+        Retrieves or creates an agent of the specified type.
+
+        This method first checks for a cached instance of the agent. If not found,
+        it creates a new one. If a `chat_engine` is provided, it will be attached
+        to the agent, replacing any existing one.
 
         Args:
-            agent_type: The type of agent to get
-            chat_engine: Optional chat engine (creates new if not provided)
-                        If provided for a cached agent, updates the agent's chat engine
+            agent_type (AgentType): The type of agent to retrieve or create.
+            chat_engine (Optional[ChatEngine], optional): An instance of the
+                ChatEngine to associate with the agent. Defaults to None.
 
         Returns:
-            The requested agent instance
+            Any: An instance of the requested agent.
         """
         # If agent exists and a new chat_engine is provided, update the cached agent's engine
         if agent_type in self.agents and chat_engine is not None:
@@ -168,25 +184,37 @@ class AgentManager:
 
     def set_current_agent(self, agent_type: AgentType, chat_engine: Optional[ChatEngine] = None):
         """
-        Set the current active agent.
+        Sets the currently active agent.
+
+        This method updates the `current_agent` and `current_agent_type`
+        attributes, making the specified agent the active one for subsequent
+        operations.
 
         Args:
-            agent_type: The type of agent to activate
-            chat_engine: Optional chat engine
+            agent_type (AgentType): The type of agent to activate.
+            chat_engine (Optional[ChatEngine], optional): The ChatEngine for
+                the agent. Defaults to None.
         """
         self.current_agent_type = agent_type
         self.current_agent = self.get_agent(agent_type, chat_engine)
 
     def get_current_agent(self) -> Optional[Any]:
-        """Get the currently active agent."""
+        """
+        Gets the currently active agent.
+
+        Returns:
+            Optional[Any]: The instance of the current agent, or None if no
+            agent is active.
+        """
         return self.current_agent
 
     def list_agents(self) -> Dict[str, Any]:
         """
-        List all available agents with their descriptions.
+        Lists all available agents along with their descriptions and use cases.
 
         Returns:
-            Dictionary of agent information
+            Dict[str, Any]: A dictionary where keys are the agent type values
+            and values are dictionaries of agent information.
         """
         return {
             agent_type.value: {
@@ -200,26 +228,31 @@ class AgentManager:
 
     def get_agent_info(self, agent_type: AgentType) -> Dict[str, Any]:
         """
-        Get information about a specific agent type.
+        Gets the descriptive information for a specific agent type.
 
         Args:
-            agent_type: The agent type to get info for
+            agent_type (AgentType): The type of the agent.
 
         Returns:
-            Agent information dictionary
+            Dict[str, Any]: A dictionary containing the agent's information,
+            or an empty dictionary if the agent type is not found.
         """
         return self.AGENT_DESCRIPTIONS.get(agent_type, {})
 
     @staticmethod
     def parse_agent_type(agent_string: str) -> Optional[AgentType]:
         """
-        Parse a string into an AgentType enum.
+        Parses a string to determine the corresponding AgentType.
+
+        This method supports matching by the agent's full name, short name, or
+        other fuzzy keywords.
 
         Args:
-            agent_string: String representation of agent type
+            agent_string (str): The string to parse.
 
         Returns:
-            AgentType enum or None if not found
+            Optional[AgentType]: The matching AgentType, or None if no match
+            is found.
         """
         agent_string = agent_string.lower().strip()
 
@@ -252,10 +285,13 @@ class AgentManager:
 
     def format_agent_list(self) -> str:
         """
-        Format the agent list for display.
+        Formats the list of available agents into a human-readable string.
+
+        This method is suitable for displaying the agent list in a command-line
+        interface.
 
         Returns:
-            Formatted string of available agents
+            str: A formatted string detailing the available agents.
         """
         output = ["Available Agents:", "=" * 60, ""]
 
@@ -277,12 +313,13 @@ class AgentManager:
 # Convenience function for creating agent manager
 def create_agent_manager(settings: Optional[Settings] = None) -> AgentManager:
     """
-    Create a new AgentManager instance.
+    A convenience function to create a new instance of AgentManager.
 
     Args:
-        settings: Optional settings object
+        settings (Optional[Settings], optional): An instance of the Settings
+            class. If None, default settings are loaded. Defaults to None.
 
     Returns:
-        AgentManager instance
+        AgentManager: A new instance of the AgentManager.
     """
     return AgentManager(settings=settings)
