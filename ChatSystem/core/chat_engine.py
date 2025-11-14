@@ -220,7 +220,6 @@ class ChatEngine:
         # Collect streamed response
         full_content = ""
         tool_calls = []
-        had_tool_calls = False
 
         for chunk in stream:
             chunk: ChatCompletionChunk
@@ -238,7 +237,6 @@ class ChatEngine:
 
             # Handle tool calls
             if delta.tool_calls:
-                had_tool_calls = True
                 for tc in delta.tool_calls:
                     # Build up tool calls incrementally
                     if tc.index >= len(tool_calls):

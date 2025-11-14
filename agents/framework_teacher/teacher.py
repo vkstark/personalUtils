@@ -5,7 +5,7 @@ This agent teaches through frameworks, not prescriptions. It focuses on meta-ski
 and transferable mental models that create trillionaire-level capabilities.
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Optional
 from ChatSystem.core.chat_engine import ChatEngine
 from ChatSystem.core.config import Settings
 

@@ -106,6 +106,7 @@ class Settings(BaseSettings):
             "enable_planning": agent_config.get("enable_planning", self.enable_planning),
             "enable_reasoning": agent_config.get("enable_reasoning", True),
             "timeout_seconds": agent_config.get("timeout_seconds", 300),
+            "default_agent": agent_config.get("default_agent", "task_executor"),
         }
 
 

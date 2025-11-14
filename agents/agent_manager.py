@@ -106,29 +106,42 @@ class AgentManager:
 
         # Create new agent based on type
         chat_engine = chat_engine or ChatEngine()
+
+        # Get agent-specific configuration from YAML
+        yaml_config = self.settings.load_yaml_config()
+        agents_config = yaml_config.get("agents", {})
+
+        # Get max_iterations for each specific agent type from config
+        # Fall back to general agent config if agent-specific config doesn't exist
         agent_config = self.settings.get_agent_config()
-        max_iterations = agent_config.get("max_iterations", 5)
+        default_max_iterations = agent_config.get("max_iterations", 5)
+
+        # Get agent-specific max_iterations or use defaults
+        executor_config = agents_config.get("task_executor", {})
+        analyzer_config = agents_config.get("transcript_analyzer", {})
+        futurist_config = agents_config.get("trillionaire_futurist", {})
+        teacher_config = agents_config.get("framework_teacher", {})
 
         agent_map = {
             AgentType.TASK_EXECUTOR: lambda: AgentExecutor(
                 chat_engine=chat_engine,
                 settings=self.settings,
-                max_iterations=max_iterations
+                max_iterations=executor_config.get("max_iterations", default_max_iterations)
             ),
             AgentType.TRANSCRIPT_ANALYZER: lambda: TranscriptAnalyzer(
                 chat_engine=chat_engine,
                 settings=self.settings,
-                max_iterations=3
+                max_iterations=analyzer_config.get("max_iterations", 3)
             ),
             AgentType.TRILLIONAIRE_FUTURIST: lambda: TrillionaireFuturist(
                 chat_engine=chat_engine,
                 settings=self.settings,
-                max_iterations=5
+                max_iterations=futurist_config.get("max_iterations", 5)
             ),
             AgentType.FRAMEWORK_TEACHER: lambda: FrameworkTeacher(
                 chat_engine=chat_engine,
                 settings=self.settings,
-                max_iterations=3
+                max_iterations=teacher_config.get("max_iterations", 3)
             )
         }
 
