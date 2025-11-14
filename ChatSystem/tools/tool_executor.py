@@ -16,9 +16,29 @@ from .tool_result import ToolExecutionResult, ToolStatus
 
 
 class ToolExecutor:
-    """Execute utility tools safely"""
+    """
+    Safely executes utility tools by running them as separate subprocesses.
+
+    This class provides a secure way to execute the various command-line
+    utility tools available in the project. It maps the function names from the
+    OpenAI API to the corresponding Python scripts and translates the arguments
+    into command-line flags.
+
+    Attributes:
+        utils_dir (Path): The base directory where the utility tools are located.
+        function_to_util (Dict[str, str]): A mapping from the OpenAI function
+            name to the relative path of the utility script.
+    """
 
     def __init__(self, utils_dir: Optional[str] = None):
+        """
+        Initializes the ToolExecutor.
+
+        Args:
+            utils_dir (Optional[str], optional): The directory containing the
+                utility tools. If not provided, it is inferred from the location
+                of this file. Defaults to None.
+        """
         # Get utilities directory
         if utils_dir:
             self.utils_dir = Path(utils_dir)
@@ -42,13 +62,22 @@ class ToolExecutor:
             "convert_data_format": "tools/DataConvert/data_convert.py",
         }
 
-    def execute(self, function_name: str, arguments: Dict[str, Any]) -> ToolExecutionResult:
+    def execute(self, function_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Execute a tool function.
+        Executes a specified tool with the given arguments.
+
+        This method finds the corresponding script for the `function_name`,
+        constructs the command-line arguments, and runs the script in a
+        separate process.
 
         Args:
-            function_name: Name of the function to execute
-            arguments: Arguments to pass to the function
+            function_name (str): The name of the function to execute.
+            arguments (Dict[str, Any]): A dictionary of arguments for the function.
+
+        Returns:
+            Dict[str, Any]: A dictionary containing the result of the execution.
+            It includes a "success" flag and either a "result" or "error" key.
+        """
 
         Returns:
             ToolExecutionResult: Structured execution result
@@ -92,19 +121,23 @@ class ToolExecutor:
             )
 
     def _execute_utility(
-        self, function_name: str, script_path: Path, args: Dict[str, Any], start_time: float
-    ) -> ToolExecutionResult:
+        self, function_name: str, script_path: Path, args: Dict[str, Any]
+    ) -> str:
         """
-        Execute specific utility with arguments.
+        Constructs and executes the command-line instruction for a specific utility.
+
+        This private method is responsible for translating the structured
+        arguments from the AI into a list of command-line flags and arguments
+        that can be passed to `subprocess.run`.
 
         Args:
-            function_name: Name of the function being executed
-            script_path: Path to the utility script
-            args: Arguments to pass to the utility
-            start_time: Time when execution started (for duration tracking)
+            function_name (str): The name of the function being executed.
+            script_path (Path): The path to the Python script for the utility.
+            args (Dict[str, Any]): The arguments for the utility.
 
         Returns:
-            ToolExecutionResult: Structured execution result
+            str: The output from the utility's execution (from stdout or stderr),
+            or an error message if the execution fails.
         """
 
         # Build command line arguments based on function

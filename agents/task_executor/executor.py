@@ -11,7 +11,22 @@ from .reasoner import Reasoner
 
 
 class AgentExecutor:
-    """Execute multi-step agentic tasks"""
+    """
+    Executes complex, multi-step tasks by breaking them down into a plan and
+    leveraging a chat engine with tools.
+
+    This agent is designed for general-purpose problem-solving. It uses a simple
+    heuristic to decide whether a task requires a multi-step plan or can be
+    executed in a single step.
+
+    Attributes:
+        chat_engine (ChatEngine): The chat engine used for interacting with the LLM.
+        settings (Optional[Settings]): The application settings.
+        max_iterations (int): The maximum number of iterations for the agent.
+        planner (TaskPlanner): An instance of the task planner.
+        reasoner (Reasoner): An instance of the reasoner to track the agent's
+            thought process.
+    """
 
     def __init__(
         self,
@@ -19,6 +34,16 @@ class AgentExecutor:
         settings: Optional[Settings] = None,
         max_iterations: int = 5,
     ):
+        """
+        Initializes the AgentExecutor.
+
+        Args:
+            chat_engine (ChatEngine): The chat engine for LLM interactions.
+            settings (Optional[Settings], optional): Application settings.
+                Defaults to None.
+            max_iterations (int, optional): The maximum number of iterations.
+                Defaults to 5.
+        """
         self.chat_engine = chat_engine
         self.settings = settings
         self.max_iterations = max_iterations
@@ -27,7 +52,19 @@ class AgentExecutor:
         self.reasoner = Reasoner()
 
     def execute_task(self, user_request: str) -> str:
-        """Execute a complex task with planning and reasoning"""
+        """
+        Executes a given task.
+
+        This method serves as the main entry point for the agent. It assesses the
+        user's request, decides whether to use a single or multi-step approach,
+        and returns the final result.
+
+        Args:
+            user_request (str): The user's request or task description.
+
+        Returns:
+            str: The final result or response from the agent.
+        """
 
         # Clear previous reasoning
         self.reasoner.clear()
@@ -48,7 +85,18 @@ class AgentExecutor:
             return self._execute_single_step(user_request)
 
     def _needs_planning(self, request: str) -> bool:
-        """Simple heuristic to determine if planning is needed"""
+        """
+        Determines if a task requires planning using a simple heuristic.
+
+        This method checks for keywords that typically indicate a multi-step
+        process.
+
+        Args:
+            request (str): The user's request.
+
+        Returns:
+            bool: True if planning is likely needed, otherwise False.
+        """
         multi_step_keywords = [
             "and then", "after", "first", "second", "finally",
             "multiple", "all", "each", "every",
@@ -59,7 +107,17 @@ class AgentExecutor:
         return any(keyword in request_lower for keyword in multi_step_keywords)
 
     def _execute_single_step(self, request: str) -> str:
-        """Execute a simple single-step task"""
+        """
+        Executes a simple, single-step task.
+
+        This method directly passes the request to the chat engine to handle.
+
+        Args:
+            request (str): The user's request.
+
+        Returns:
+            str: The response from the chat engine.
+        """
 
         # Use chat engine to handle the request
         response_parts = []
@@ -70,7 +128,19 @@ class AgentExecutor:
         return "".join(response_parts)
 
     def _execute_multi_step(self, request: str) -> str:
-        """Execute a multi-step task with planning"""
+        """
+        Executes a multi-step task.
+
+        This method first asks the LLM to create a plan for the task. Then, it
+        instructs the chat engine to execute the original request, relying on the
+        engine's tool-calling capabilities to follow the plan.
+
+        Args:
+            request (str): The user's request.
+
+        Returns:
+            str: The consolidated result of the multi-step execution.
+        """
 
         results = []
 
@@ -108,5 +178,10 @@ For each step, specify:
         return "\n".join(results)
 
     def get_reasoning_trace(self) -> str:
-        """Get the reasoning trace"""
+        """
+        Retrieves the reasoning trace for the last executed task.
+
+        Returns:
+            str: A string detailing the agent's thought process.
+        """
         return self.reasoner.get_reasoning_trace()

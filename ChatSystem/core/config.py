@@ -13,7 +13,27 @@ from functools import lru_cache
 
 
 class Settings(BaseSettings):
-    """Application settings with validation"""
+    """
+    Manages application settings using Pydantic for validation.
+
+    Loads configuration from environment variables, a .env file, and a specified
+    YAML file. Provides a centralized and validated source for all configuration
+    parameters.
+
+    Attributes:
+        openai_api_key (str): The API key for OpenAI services.
+        model_name (str): The default GPT model to be used for chat.
+        max_tokens (int): The maximum number of tokens for a chat completion.
+        temperature (float): The sampling temperature for generating responses.
+        stream_responses (bool): Whether to stream chat responses.
+        enable_tools (bool): Flag to enable or disable function calling tools.
+        parallel_tool_calls (bool): Flag to enable parallel tool execution.
+        max_agent_iterations (int): The maximum iterations for agentic workflows.
+        enable_planning (bool): Flag to enable planning in agents.
+        log_level (str): The logging level for the application.
+        log_file (str): The file path for logging output.
+        config_yaml_path (str): The path to the YAML configuration file.
+    """
 
     # OpenAI Configuration
     openai_api_key: str = Field(..., description="OpenAI API key")
@@ -51,7 +71,18 @@ class Settings(BaseSettings):
     @field_validator("model_name")
     @classmethod
     def validate_model(cls, v: str) -> str:
-        """Validate model name"""
+        """
+        Validates the provided model name against a list of known models.
+
+        Args:
+            v (str): The model name to validate.
+
+        Returns:
+            str: The validated model name.
+
+        Raises:
+            ValueError: If the model name is not in the list of valid models.
+        """
         valid_models = [
             "gpt-4o", "gpt-4o-mini", "gpt-4.1",
             "gpt-4.1-mini", "gpt-4.1-nano",
@@ -64,7 +95,18 @@ class Settings(BaseSettings):
     @field_validator("log_level")
     @classmethod
     def validate_log_level(cls, v: str) -> str:
-        """Validate log level"""
+        """
+        Validates the provided log level against a list of valid levels.
+
+        Args:
+            v (str): The log level to validate.
+
+        Returns:
+            str: The validated log level in uppercase.
+
+        Raises:
+            ValueError: If the log level is not in the list of valid levels.
+        """
         valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
         v_upper = v.upper()
         if v_upper not in valid_levels:
@@ -72,7 +114,16 @@ class Settings(BaseSettings):
         return v_upper
 
     def load_yaml_config(self) -> Dict[str, Any]:
-        """Load additional configuration from YAML"""
+        """
+        Loads additional configuration from a YAML file.
+
+        The path to the YAML file is specified by the `config_yaml_path`
+        attribute. If the file does not exist, an empty dictionary is returned.
+
+        Returns:
+            Dict[str, Any]: A dictionary containing the YAML configuration, or
+            an empty dictionary if the file doesn't exist.
+        """
         yaml_path = Path(self.config_yaml_path)
         if yaml_path.exists():
             with open(yaml_path, 'r') as f:
@@ -80,7 +131,19 @@ class Settings(BaseSettings):
         return {}
 
     def get_model_for_task(self, task_type: str = "general") -> str:
-        """Get optimal model for task type"""
+        """
+        Retrieves the optimal model name for a given task type from the YAML config.
+
+        This allows for specialized models to be used for different tasks (e.g.,
+        'reasoning', 'coding'). If a model for the specified task type is not
+        found, the default model name is returned.
+
+        Args:
+            task_type (str, optional): The type of task. Defaults to "general".
+
+        Returns:
+            str: The recommended model name for the task.
+        """
         yaml_config = self.load_yaml_config()
         models = yaml_config.get("models", {})
 
@@ -88,7 +151,16 @@ class Settings(BaseSettings):
         return models.get(task_type, self.model_name)
 
     def get_enabled_tools(self) -> List[str]:
-        """Get list of enabled tools from config"""
+        """
+        Gets the list of enabled tool names from the YAML configuration.
+
+        If the `enable_tools` setting is `False`, this returns an empty list.
+        Otherwise, it reads the list of enabled tools from the 'tools' section
+        of the YAML config.
+
+        Returns:
+            List[str]: A list of names of the enabled tools.
+        """
         if not self.enable_tools:
             return []
 
@@ -97,7 +169,16 @@ class Settings(BaseSettings):
         return tools_config.get("enabled", [])
 
     def get_agent_config(self) -> Dict[str, Any]:
-        """Get agent configuration"""
+        """
+        Retrieves the agent configuration from the YAML file.
+
+        This method fetches the 'agent' section from the YAML configuration,
+        providing default values for key agent parameters if they are not
+        specified.
+
+        Returns:
+            Dict[str, Any]: A dictionary containing the agent configuration.
+        """
         yaml_config = self.load_yaml_config()
         agent_config = yaml_config.get("agent", {})
 
@@ -112,7 +193,16 @@ class Settings(BaseSettings):
 
 @lru_cache()
 def get_settings() -> Settings:
-    """Get cached settings instance"""
+    """
+    Retrieves a cached instance of the Settings object.
+
+    This function uses an LRU (Least Recently Used) cache to ensure that the
+    Settings object is instantiated only once, providing a singleton-like
+    behavior for accessing application settings.
+
+    Returns:
+        Settings: The cached instance of the application settings.
+    """
     return Settings()
 
 
@@ -130,7 +220,21 @@ MODEL_PRICING = {
 
 
 def calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    """Calculate cost for API call"""
+    """
+    Calculates the estimated cost of an OpenAI API call based on token usage.
+
+    This function uses a predefined pricing model for various GPT models to
+    calculate the cost. If the specified model is not found in the pricing
+    map, it defaults to 'gpt-4o' pricing.
+
+    Args:
+        model (str): The name of the model used for the API call.
+        input_tokens (int): The number of tokens in the input prompt.
+        output_tokens (int): The number of tokens in the generated response.
+
+    Returns:
+        float: The total calculated cost for the API call.
+    """
     pricing = MODEL_PRICING.get(model, MODEL_PRICING["gpt-4o"])
 
     input_cost = (input_tokens / 1_000_000) * pricing["input"]

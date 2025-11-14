@@ -12,13 +12,17 @@ from ChatSystem.core.config import Settings
 
 class TranscriptAnalyzer:
     """
-    Expert transcript analysis agent that extracts:
-    - Business value and ROI implications
-    - Speaker thought processes and mental models
-    - Skills demonstrated by speakers
-    - Frameworks and methodologies used
-    - Key lessons and insights
-    - 10 actionable steps to implement learnings
+    An agent that performs a deep, multi-dimensional analysis of transcripts.
+
+    This agent uses a detailed system persona to guide the LLM in extracting
+    business value, deconstructing thought processes, identifying skills,
+    detecting frameworks, and creating actionable implementation plans from
+    transcript text.
+
+    Attributes:
+        chat_engine (ChatEngine): The chat engine for LLM interactions.
+        settings (Settings): The application settings.
+        max_iterations (int): The maximum number of iterations for the agent.
     """
 
     SYSTEM_PERSONA = """You are an elite Transcript Intelligence Analyst with 20+ years of experience in strategic business analysis, cognitive psychology, and executive development.
@@ -354,7 +358,17 @@ Begin every analysis by carefully reading the transcript multiple times, then pr
         settings: Optional[Settings] = None,
         max_iterations: int = 3
     ):
-        """Initialize the Transcript Analyzer Agent."""
+        """
+        Initializes the TranscriptAnalyzer agent.
+
+        Args:
+            chat_engine (Optional[ChatEngine], optional): The chat engine for
+                LLM interactions. If None, a new one is created. Defaults to None.
+            settings (Optional[Settings], optional): Application settings. If
+                None, default settings are loaded. Defaults to None.
+            max_iterations (int, optional): The maximum number of iterations.
+                Defaults to 3.
+        """
         self.chat_engine = chat_engine or ChatEngine()
         self.settings = settings or Settings()
         self.max_iterations = max_iterations
@@ -364,13 +378,17 @@ Begin every analysis by carefully reading the transcript multiple times, then pr
 
     def analyze(self, transcript: str) -> str:
         """
-        Analyze a transcript and return comprehensive analysis.
+        Performs a comprehensive analysis of a given transcript.
+
+        This is the main method of the agent. It sends the transcript to the
+        LLM with instructions to follow the detailed analysis framework defined
+        in the system persona.
 
         Args:
-            transcript: The transcript text to analyze
+            transcript (str): The text of the transcript to be analyzed.
 
         Returns:
-            Comprehensive analysis report
+            str: A detailed analysis report in Markdown format.
         """
         analysis_prompt = f"""Please analyze the following transcript using your comprehensive framework:
 
@@ -392,13 +410,16 @@ Provide your complete analysis report following the structured format."""
 
     def quick_summary(self, transcript: str) -> Dict[str, Any]:
         """
-        Get a quick summary of the transcript (faster, less detailed).
+        Generates a quick, high-level summary of a transcript.
+
+        This method is a faster, less detailed alternative to the `analyze`
+        method, suitable for getting a quick overview of the transcript's content.
 
         Args:
-            transcript: The transcript text to analyze
+            transcript (str): The text of the transcript.
 
         Returns:
-            Dictionary with key insights
+            Dict[str, Any]: A dictionary containing the summary.
         """
         summary_prompt = f"""Provide a QUICK summary of this transcript with:
 1. Top 3 business values
