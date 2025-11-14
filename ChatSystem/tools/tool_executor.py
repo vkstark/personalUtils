@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """
 ToolExecutor - Safely execute utility tools
+
+Version 2.0: Returns structured ToolExecutionResult for all executions
 """
 
 import sys
 import json
 import subprocess
+import time
 from typing import Dict, Any, Optional
 from pathlib import Path
+
+from .tool_result import ToolExecutionResult, ToolStatus
 
 
 class ToolExecutor:
@@ -74,39 +79,47 @@ class ToolExecutor:
             It includes a "success" flag and either a "result" or "error" key.
         """
 
+        start_time = time.time()
+
+        # Check if function exists
         if function_name not in self.function_to_util:
-            return {
-                "success": False,
-                "error": f"Unknown function: {function_name}"
-            }
+            return ToolExecutionResult(
+                status=ToolStatus.ERROR,
+                tool_name=function_name,
+                duration=time.time() - start_time,
+                error_message=f"Unknown function: {function_name}",
+                error_type="UnknownFunctionError"
+            )
 
         try:
             # Get utility script path
             util_script = self.utils_dir / self.function_to_util[function_name]
 
             if not util_script.exists():
-                return {
-                    "success": False,
-                    "error": f"Utility script not found: {util_script}"
-                }
+                return ToolExecutionResult(
+                    status=ToolStatus.ERROR,
+                    tool_name=function_name,
+                    duration=time.time() - start_time,
+                    error_message=f"Utility script not found: {util_script}",
+                    error_type="FileNotFoundError"
+                )
 
-            # Build command based on function
-            result = self._execute_utility(function_name, util_script, arguments)
-
-            return {
-                "success": True,
-                "result": result
-            }
+            # Build command and execute
+            result = self._execute_utility(function_name, util_script, arguments, start_time)
+            return result
 
         except Exception as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }
+            return ToolExecutionResult(
+                status=ToolStatus.ERROR,
+                tool_name=function_name,
+                duration=time.time() - start_time,
+                error_message=str(e),
+                error_type=type(e).__name__
+            )
 
     def _execute_utility(
-        self, function_name: str, script_path: Path, args: Dict[str, Any]
-    ) -> str:
+        self, function_name: str, script_path: Path, args: Dict[str, Any], start_time: float
+    ) -> ToolExecutionResult:
         """
         Constructs and executes the command-line instruction for a specific utility.
 
@@ -118,10 +131,11 @@ class ToolExecutor:
             function_name (str): The name of the function being executed.
             script_path (Path): The path to the Python script for the utility.
             args (Dict[str, Any]): The arguments for the utility.
+            start_time (float): The timestamp when execution started, used to calculate duration.
 
         Returns:
-            str: The output from the utility's execution (from stdout or stderr),
-            or an error message if the execution fails.
+            ToolExecutionResult: A structured result object containing execution status,
+            output, error information, and metadata.
         """
 
         # Build command line arguments based on function
@@ -181,15 +195,23 @@ class ToolExecutor:
             cmd.append("--no-color")
 
         elif function_name == "bulk_rename_files":
-            # This is complex - return a structured response
-            return json.dumps({
-                "message": "BulkRename requires interactive confirmation. Please use the CLI directly.",
-                "path": args.get("path"),
-                "pattern": args.get("pattern"),
-                "replacement": args.get("replacement"),
-                "mode": args.get("mode"),
-                "dry_run": args.get("dry_run", True)
-            })
+            # This is complex - requires manual confirmation
+            message = "BulkRename requires interactive confirmation. Please use the CLI directly."
+            return ToolExecutionResult(
+                status=ToolStatus.MANUAL_REQUIRED,
+                tool_name=function_name,
+                duration=time.time() - start_time,
+                stdout=message,
+                structured_payload={
+                    "message": message,
+                    "path": args.get("path"),
+                    "pattern": args.get("pattern"),
+                    "replacement": args.get("replacement"),
+                    "mode": args.get("mode"),
+                    "dry_run": args.get("dry_run", True)
+                },
+                has_side_effects=True
+            )
 
         elif function_name == "manage_env_files":
             action = args["action"]
@@ -199,10 +221,18 @@ class ToolExecutor:
                 cmd.extend([args.get("file_path", ".env")])
                 cmd.append("--no-color")
             else:
-                return json.dumps({
-                    "message": f"EnvManager action '{action}' - execute manually",
-                    "file_path": args.get("file_path")
-                })
+                message = f"EnvManager action '{action}' - execute manually"
+                return ToolExecutionResult(
+                    status=ToolStatus.MANUAL_REQUIRED,
+                    tool_name=function_name,
+                    duration=time.time() - start_time,
+                    stdout=message,
+                    structured_payload={
+                        "message": message,
+                        "file_path": args.get("file_path")
+                    },
+                    has_side_effects=True
+                )
 
         elif function_name == "compare_files":
             cmd.append(args["file1"])
@@ -281,7 +311,13 @@ class ToolExecutor:
             cmd.extend(["--output-format", args["to_format"]])  # DataConvert uses --output-format
 
         else:
-            return f"Function {function_name} not fully implemented"
+            return ToolExecutionResult(
+                status=ToolStatus.ERROR,
+                tool_name=function_name,
+                duration=time.time() - start_time,
+                error_message=f"Function {function_name} not fully implemented",
+                error_type="NotImplementedError"
+            )
 
         # Execute command
         # Security note: Using list-based arguments without shell=True is secure
@@ -297,16 +333,66 @@ class ToolExecutor:
                 shell=False  # Explicitly disable shell for security
             )
 
-            # Check for non-zero exit code
-            if result.returncode != 0:
-                error_output = result.stderr.strip() if result.stderr else "Unknown error"
-                return f"Error: Command failed with exit code {result.returncode}: {error_output}"
-            
-            # Return output
-            output = result.stdout or result.stderr
-            return output.strip() if output else "Command executed successfully"
+            # Calculate final duration
+            duration = time.time() - start_time
+
+            # Try to parse structured payload from stdout
+            structured_payload = None
+            if result.stdout:
+                try:
+                    structured_payload = json.loads(result.stdout)
+                except (json.JSONDecodeError, ValueError):
+                    # Not JSON, that's fine - stdout will be plain text
+                    pass
+
+            # Determine status based on exit code
+            if result.returncode == 0:
+                status = ToolStatus.SUCCESS
+                error_msg = None
+                error_type = None
+            else:
+                status = ToolStatus.ERROR
+                error_msg = result.stderr.strip() if result.stderr else f"Command failed with exit code {result.returncode}"
+                error_type = "SubprocessError"
+
+            # Determine if tool has side effects
+            has_side_effects = function_name in [
+                "bulk_rename_files",
+                "manage_env_files",
+                "manage_code_snippets",  # add/delete operations
+                "convert_data_format"  # writes output file
+            ]
+
+            return ToolExecutionResult(
+                status=status,
+                stdout=result.stdout,
+                stderr=result.stderr,
+                structured_payload=structured_payload,
+                duration=duration,
+                tool_name=function_name,
+                exit_code=result.returncode,
+                command=" ".join(cmd),
+                error_message=error_msg,
+                error_type=error_type,
+                has_side_effects=has_side_effects
+            )
 
         except subprocess.TimeoutExpired:
-            return "Error: Command timed out after 60 seconds"
+            return ToolExecutionResult(
+                status=ToolStatus.TIMEOUT,
+                tool_name=function_name,
+                duration=60.0,
+                command=" ".join(cmd),
+                error_message="Command timed out after 60 seconds",
+                error_type="TimeoutError"
+            )
+
         except Exception as e:
-            return f"Error executing command: {str(e)}"
+            return ToolExecutionResult(
+                status=ToolStatus.ERROR,
+                tool_name=function_name,
+                duration=time.time() - start_time,
+                command=" ".join(cmd),
+                error_message=f"Error executing command: {str(e)}",
+                error_type=type(e).__name__
+            )
