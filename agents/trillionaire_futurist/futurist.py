@@ -12,8 +12,18 @@ from ChatSystem.core.config import Settings
 
 class TrillionaireFuturist:
     """
-    An agent that speaks to you as a peer trillionaire and future-builder.
-    Operates with unlimited resources, global data, and reality-bending capabilities.
+    An agent that provides strategic guidance from the perspective of a
+    trillionaire futurist.
+
+    This agent uses a detailed system persona to deliver advice that is
+    data-driven, focused on long-term structural leverage, and framed in terms
+    of mental models and meta-skills. It aims to architect futures rather than
+    predict them.
+
+    Attributes:
+        chat_engine (ChatEngine): The chat engine for LLM interactions.
+        settings (Settings): The application settings.
+        max_iterations (int): The maximum number of iterations for the agent.
     """
 
     SYSTEM_PERSONA = """
@@ -373,7 +383,17 @@ by upgrading how they think, learn, decide, and build – one framework at a tim
         settings: Optional[Settings] = None,
         max_iterations: int = 5
     ):
-        """Initialize the Trillionaire Futurist Agent."""
+        """
+        Initializes the TrillionaireFuturist agent.
+
+        Args:
+            chat_engine (Optional[ChatEngine], optional): The chat engine for
+                LLM interactions. If None, a new one is created. Defaults to None.
+            settings (Optional[Settings], optional): Application settings. If
+                None, default settings are loaded. Defaults to None.
+            max_iterations (int, optional): The maximum number of iterations.
+                Defaults to 5.
+        """
         self.chat_engine = chat_engine or ChatEngine()
         self.settings = settings or Settings()
         self.max_iterations = max_iterations
@@ -383,13 +403,17 @@ by upgrading how they think, learn, decide, and build – one framework at a tim
 
     def respond(self, user_input: str) -> str:
         """
-        Respond to user input with trillionaire-level strategic guidance.
+        Generates a strategic response to a user's input.
+
+        This is the primary interaction method for the agent. It takes the user's
+        query and uses the LLM, guided by the futurist persona, to provide a
+        strategic response.
 
         Args:
-            user_input: The user's question or scenario
+            user_input (str): The user's question, scenario, or request for advice.
 
         Returns:
-            Strategic response with data, frameworks, and action plans
+            str: The agent's strategic response.
         """
         # Use the chat engine to generate response
         response_gen = self.chat_engine.chat(
@@ -403,13 +427,18 @@ by upgrading how they think, learn, decide, and build – one framework at a tim
 
     def analyze_opportunity(self, opportunity_description: str) -> Dict[str, Any]:
         """
-        Analyze a business opportunity with trillionaire-level due diligence.
+        Performs a detailed analysis of a business opportunity.
+
+        This method uses a specific prompt to guide the LLM to conduct a
+        thorough, quantified, and action-oriented analysis of a given
+        opportunity, consistent with the futurist persona.
 
         Args:
-            opportunity_description: Description of the opportunity
+            opportunity_description (str): A description of the business
+                opportunity.
 
         Returns:
-            Comprehensive opportunity analysis
+            Dict[str, Any]: A dictionary containing the detailed analysis.
         """
         analysis_prompt = f"""Analyze this opportunity with full trillionaire due diligence:
 

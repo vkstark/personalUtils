@@ -14,6 +14,15 @@ class FrameworkTeacher:
     """
     A framework-based teaching agent that provides mental models and systems
     for developing trillionaire-level skills and capabilities.
+
+    This agent specializes in meta-learning, teaching users *how* to think
+    rather than just *what* to do. It uses a detailed system persona to guide
+    its responses, focusing on transferable frameworks and mental models.
+
+    Attributes:
+        chat_engine (ChatEngine): The chat engine for LLM interactions.
+        settings (Settings): The application settings.
+        max_iterations (int): The maximum number of iterations for the agent.
     """
 
     SYSTEM_PERSONA = """
@@ -484,7 +493,17 @@ You are a FRAMEWORK ENGINE that manufactures better thinkers.
         settings: Optional[Settings] = None,
         max_iterations: int = 3
     ):
-        """Initialize the Framework Teacher Agent."""
+        """
+        Initializes the FrameworkTeacher agent.
+
+        Args:
+            chat_engine (Optional[ChatEngine], optional): The chat engine for
+                LLM interactions. If None, a new one is created. Defaults to None.
+            settings (Optional[Settings], optional): Application settings. If
+                None, default settings are loaded. Defaults to None.
+            max_iterations (int, optional): The maximum number of iterations.
+                Defaults to 3.
+        """
         self.chat_engine = chat_engine or ChatEngine()
         self.settings = settings or Settings()
         self.max_iterations = max_iterations
@@ -494,13 +513,18 @@ You are a FRAMEWORK ENGINE that manufactures better thinkers.
 
     def teach(self, user_request: str) -> str:
         """
-        Teach a framework based on user request.
+        Generates a teaching response based on the user's request.
+
+        This is the primary method of the agent, which takes a user's learning
+        goal and uses the LLM, guided by the system persona, to produce a
+        framework-based lesson.
 
         Args:
-            user_request: What the user wants to learn
+            user_request (str): The user's request, describing what they want
+                to learn.
 
         Returns:
-            Framework-based teaching response
+            str: The agent's teaching response.
         """
         # Use the chat engine to generate teaching response
         response_gen = self.chat_engine.chat(
@@ -514,13 +538,14 @@ You are a FRAMEWORK ENGINE that manufactures better thinkers.
 
     def list_frameworks(self, category: Optional[str] = None) -> str:
         """
-        List available frameworks, optionally filtered by category.
+        Lists the frameworks that the agent can teach.
 
         Args:
-            category: Optional category filter (thinking, learning, decision, etc.)
+            category (Optional[str], optional): A category to filter the list
+                of frameworks (e.g., "thinking", "learning"). Defaults to None.
 
         Returns:
-            List of frameworks
+            str: A formatted list of the available frameworks.
         """
         list_prompt = f"""List the frameworks you can teach"""
 
@@ -544,13 +569,15 @@ You are a FRAMEWORK ENGINE that manufactures better thinkers.
 
     def quick_framework(self, skill: str) -> str:
         """
-        Get a quick framework summary for a specific skill.
+        Provides a concise summary of a framework for a given skill.
+
+        This method is designed for quick, high-level overviews of a framework.
 
         Args:
-            skill: The skill to get a framework for
+            skill (str): The skill for which to provide a framework.
 
         Returns:
-            Quick framework summary
+            str: A brief summary of the framework.
         """
         quick_prompt = f"""Give me a QUICK framework for: {skill}
 
