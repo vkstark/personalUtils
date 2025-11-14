@@ -1,17 +1,28 @@
 #!/usr/bin/env python3
-"""
-ToolExecutor - Safely execute utility tools
-"""
+"""ToolExecutor - Safely execute utility tools."""
 
-import sys
+from __future__ import annotations
+
 import json
 import subprocess
-from typing import Dict, Any, Optional
+import sys
+import time
 from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
+
+from .execution_result import (
+    TOOL_STATUS_ERROR,
+    TOOL_STATUS_MANUAL_REQUIRED,
+    TOOL_STATUS_SUCCESS,
+    TOOL_STATUS_TIMEOUT,
+    ToolExecutionResult,
+)
+
+MAX_OUTPUT_LENGTH = 8_192
 
 
 class ToolExecutor:
-    """Execute utility tools safely"""
+    """Execute utility tools safely."""
 
     def __init__(self, utils_dir: Optional[str] = None):
         # Get utilities directory
@@ -37,46 +48,102 @@ class ToolExecutor:
             "convert_data_format": "tools/DataConvert/data_convert.py",
         }
 
-    def execute(self, function_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute a tool function"""
+        # Tools that may cause side effects when executed automatically
+        self.side_effect_tools = {"bulk_rename_files", "manage_env_files"}
+
+    def execute(self, function_name: str, arguments: Dict[str, Any]) -> ToolExecutionResult:
+        """Execute a tool function and return a normalized result."""
+
+        metadata = {
+            "name": function_name,
+            "version": "1.0",
+            "side_effects": function_name in self.side_effect_tools,
+        }
 
         if function_name not in self.function_to_util:
-            return {
-                "success": False,
-                "error": f"Unknown function: {function_name}"
-            }
+            return ToolExecutionResult.from_error(
+                f"Unknown function: {function_name}", metadata=metadata
+            )
+
+        start_time = time.perf_counter()
+
+        util_script = self.utils_dir / self.function_to_util[function_name]
+        if not util_script.exists():
+            return ToolExecutionResult.from_error(
+                f"Utility script not found: {util_script}", metadata=metadata
+            )
+
+        command_or_result = self._build_command(function_name, util_script, arguments)
+
+        if isinstance(command_or_result, ToolExecutionResult):
+            result = command_or_result
+            result.duration = time.perf_counter() - start_time
+            result.stdout = self._truncate(result.stdout)
+            result.stderr = self._truncate(result.stderr)
+            result.metadata = {**metadata, **result.metadata}
+            return result
+
+        cmd, metadata_updates = command_or_result
+        if metadata_updates:
+            metadata.update(metadata_updates)
 
         try:
-            # Get utility script path
-            util_script = self.utils_dir / self.function_to_util[function_name]
+            completed = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+                shell=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            duration = time.perf_counter() - start_time
+            stdout = self._truncate((exc.stdout or "").strip())
+            stderr = self._truncate((exc.stderr or "Command timed out after 60 seconds").strip())
+            return ToolExecutionResult(
+                status=TOOL_STATUS_TIMEOUT,
+                stdout=stdout,
+                stderr=stderr,
+                structured_payload=None,
+                duration=duration,
+                metadata=metadata,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            duration = time.perf_counter() - start_time
+            return ToolExecutionResult(
+                status=TOOL_STATUS_ERROR,
+                stdout="",
+                stderr=str(exc),
+                structured_payload=None,
+                duration=duration,
+                metadata=metadata,
+            )
 
-            if not util_script.exists():
-                return {
-                    "success": False,
-                    "error": f"Utility script not found: {util_script}"
-                }
+        duration = time.perf_counter() - start_time
+        stdout = self._truncate((completed.stdout or "").strip())
+        stderr = self._truncate((completed.stderr or "").strip())
+        structured_payload = self._parse_structured_payload(stdout)
 
-            # Build command based on function
-            result = self._execute_utility(function_name, util_script, arguments)
+        status = TOOL_STATUS_SUCCESS
+        if completed.returncode != 0:
+            status = TOOL_STATUS_ERROR
+            if not stderr:
+                stderr = f"Command failed with exit code {completed.returncode}"
 
-            return {
-                "success": True,
-                "result": result
-            }
+        return ToolExecutionResult(
+            status=status,
+            stdout=stdout,
+            stderr=stderr,
+            structured_payload=structured_payload,
+            duration=duration,
+            metadata=metadata,
+        )
 
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }
-
-    def _execute_utility(
+    def _build_command(
         self, function_name: str, script_path: Path, args: Dict[str, Any]
-    ) -> str:
-        """Execute specific utility with arguments"""
+    ) -> Tuple[list[str], Dict[str, Any]] | ToolExecutionResult:
+        """Build command line arguments for a given tool."""
 
-        # Build command line arguments based on function
-        # Note: Using list-based arguments with shell=False is secure against injection
         cmd = [sys.executable, str(script_path)]
 
         if function_name == "analyze_python_code":
@@ -132,40 +199,53 @@ class ToolExecutor:
             cmd.append("--no-color")
 
         elif function_name == "bulk_rename_files":
-            # This is complex - return a structured response
-            return json.dumps({
+            payload = {
                 "message": "BulkRename requires interactive confirmation. Please use the CLI directly.",
                 "path": args.get("path"),
                 "pattern": args.get("pattern"),
                 "replacement": args.get("replacement"),
                 "mode": args.get("mode"),
-                "dry_run": args.get("dry_run", True)
-            })
+                "dry_run": args.get("dry_run", True),
+            }
+            return ToolExecutionResult(
+                status=TOOL_STATUS_MANUAL_REQUIRED,
+                stdout="",
+                stderr="",
+                structured_payload=payload,
+                duration=0.0,
+                metadata={"name": function_name, "version": "1.0", "side_effects": True},
+            )
 
         elif function_name == "manage_env_files":
             action = args["action"]
 
             if action == "parse":
-                # Parse and return env variables
                 cmd.extend([args.get("file_path", ".env")])
                 cmd.append("--no-color")
             else:
-                return json.dumps({
-                    "message": f"EnvManager action '{action}' - execute manually",
-                    "file_path": args.get("file_path")
-                })
+                payload = {
+                    "message": f"EnvManager action '{action}' requires manual execution.",
+                    "file_path": args.get("file_path"),
+                }
+                return ToolExecutionResult(
+                    status=TOOL_STATUS_MANUAL_REQUIRED,
+                    stdout="",
+                    stderr="",
+                    structured_payload=payload,
+                    duration=0.0,
+                    metadata={"name": function_name, "version": "1.0", "side_effects": True},
+                )
 
         elif function_name == "compare_files":
             cmd.append(args["file1"])
             cmd.append(args["file2"])
             if args.get("format"):
-                cmd.extend(["--mode", args["format"]])  # FileDiff uses --mode, not --format
+                cmd.extend(["--mode", args["format"]])
             cmd.append("--no-color")
 
         elif function_name == "analyze_git_repository":
             cmd.append(args.get("repo_path", "."))
 
-            # Map report_type to appropriate git_stats.py arguments
             report_type = args.get("report_type", "summary")
             top_n = args.get("top_n", 10)
             recent_days = args.get("recent_days", 30)
@@ -180,13 +260,11 @@ class ToolExecutor:
                 cmd.append("--activity")
             elif report_type == "recent":
                 cmd.extend(["--recent", str(recent_days)])
-            # "summary" is default - no extra args needed
 
             if args.get("no_color", True):
                 cmd.append("--no-color")
 
         elif function_name == "optimize_python_imports":
-            # ImportOptimizer uses subcommands: unused or organize
             command = args.get("command", "unused")
             cmd.append(command)
             cmd.append(args["path"])
@@ -198,7 +276,6 @@ class ToolExecutor:
                 cmd.append("--no-color")
 
         elif function_name == "visualize_directory_tree":
-            # PathSketch is a directory tree visualization tool
             cmd.append(args.get("path", "."))
 
             if args.get("show_all"):
@@ -216,48 +293,48 @@ class ToolExecutor:
 
         elif function_name == "extract_todos":
             cmd.append(args["path"])
-            # TodoExtractor uses --no-recursive flag (inverted logic)
             if not args.get("recursive", True):
                 cmd.append("--no-recursive")
             if args.get("extensions"):
                 cmd.extend(["--extensions"] + args["extensions"])
             if args.get("keywords"):
-                cmd.extend(["--tags"] + args["keywords"])  # TodoExtractor uses --tags, not --keywords
+                cmd.extend(["--tags"] + args["keywords"])
             cmd.append("--no-color")
 
         elif function_name == "convert_data_format":
             cmd.append(args["input_file"])
             cmd.append(args["output_file"])
-            cmd.extend(["--input-format", args["from_format"]])  # DataConvert uses --input-format
-            cmd.extend(["--output-format", args["to_format"]])  # DataConvert uses --output-format
+            cmd.extend(["--input-format", args["from_format"]])
+            cmd.extend(["--output-format", args["to_format"]])
 
         else:
-            return f"Function {function_name} not fully implemented"
-
-        # Execute command
-        # Security note: Using list-based arguments without shell=True is secure
-        # against command injection. Arguments are passed directly to the executable
-        # without shell interpretation, even if they contain special characters.
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=60,
-                check=False,
-                shell=False  # Explicitly disable shell for security
+            return ToolExecutionResult(
+                status=TOOL_STATUS_ERROR,
+                stdout="",
+                stderr=f"Function {function_name} not fully implemented",
+                structured_payload={"error": "Function not implemented"},
+                duration=0.0,
+                metadata={"name": function_name, "version": "1.0", "side_effects": False},
             )
 
-            # Check for non-zero exit code
-            if result.returncode != 0:
-                error_output = result.stderr.strip() if result.stderr else "Unknown error"
-                return f"Error: Command failed with exit code {result.returncode}: {error_output}"
-            
-            # Return output
-            output = result.stdout or result.stderr
-            return output.strip() if output else "Command executed successfully"
+        return cmd, {}
 
-        except subprocess.TimeoutExpired:
-            return "Error: Command timed out after 60 seconds"
-        except Exception as e:
-            return f"Error executing command: {str(e)}"
+    @staticmethod
+    def _truncate(value: str, limit: int = MAX_OUTPUT_LENGTH) -> str:
+        if len(value) <= limit:
+            return value
+        return value[: limit - 3] + "..."
+
+    @staticmethod
+    def _parse_structured_payload(stdout: str) -> Optional[Any]:
+        if not stdout:
+            return None
+
+        stripped = stdout.strip()
+        if not stripped:
+            return None
+
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            return None

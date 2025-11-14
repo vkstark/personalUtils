@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""
-ToolRegistry - Register and manage available tools
-"""
+"""ToolRegistry - Register and manage available tools"""
 
 from typing import List, Dict, Any, Optional, Callable
 
+from .execution_result import ToolExecutionResult
 from .tool_adapter import ToolAdapter
 from .tool_executor import ToolExecutor
 
@@ -31,13 +30,27 @@ class ToolRegistry:
         """Get all registered tools in OpenAI format"""
         return self.tools
 
-    def execute_tool(self, function_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    def execute_tool(self, function_name: str, arguments: Dict[str, Any]) -> ToolExecutionResult:
         """Execute a tool by function name"""
         return self.executor.execute(function_name, arguments)
 
-    def get_tool_executor(self) -> Callable:
+    def get_tool_executor(self) -> Callable[[str, Dict[str, Any]], ToolExecutionResult]:
         """Get executor function for ChatEngine"""
         return self.executor.execute
+
+    @staticmethod
+    def serialize_result(result: ToolExecutionResult | Dict[str, Any]) -> Dict[str, Any]:
+        """Serialize a tool execution result for conversation storage."""
+
+        if isinstance(result, ToolExecutionResult):
+            return result.to_dict()
+        return result
+
+    @staticmethod
+    def to_legacy_payload(result: ToolExecutionResult) -> Dict[str, Any]:
+        """Convert a normalized result to the legacy format."""
+
+        return result.to_legacy_response()
 
     def list_available_tools(self) -> List[str]:
         """List all available tool names"""

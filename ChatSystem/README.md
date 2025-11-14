@@ -91,7 +91,11 @@ from ChatSystem.tools import ToolRegistry
 # Register tools
 registry = ToolRegistry(enabled_tools=["CodeWhisper", "APITester"])
 tools = registry.get_tools()
-engine.register_tools(tools, registry.get_tool_executor())
+engine.register_tools(
+    tools,
+    registry.get_tool_executor(),
+    result_serializer=registry.serialize_result,
+)
 
 # Chat will automatically use tools
 response = engine.chat("Analyze the code in ./myproject")

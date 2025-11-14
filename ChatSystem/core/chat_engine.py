@@ -11,6 +11,11 @@ from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMe
 
 from .config import Settings, calculate_cost
 from .conversation import ConversationManager
+from ..tools.execution_result import (
+    TOOL_STATUS_ERROR,
+    TOOL_STATUS_SUCCESS,
+    ToolExecutionResult,
+)
 
 
 class ChatEngine:
@@ -38,6 +43,7 @@ class ChatEngine:
         # Tool registry (will be set by tool system)
         self.tools: List[Dict[str, Any]] = []
         self.tool_executor: Optional[Callable] = None
+        self.tool_result_serializer: Callable[[Any], Dict[str, Any]] = self._default_result_serializer
         
         # Tool call recursion tracking
         self.tool_call_depth = 0
@@ -52,10 +58,17 @@ class ChatEngine:
             "tool_calls_made": 0,
         }
 
-    def register_tools(self, tools: List[Dict[str, Any]], executor: Callable):
+    def register_tools(
+        self,
+        tools: List[Dict[str, Any]],
+        executor: Callable,
+        result_serializer: Optional[Callable[[Any], Dict[str, Any]]] = None,
+    ):
         """Register tools for function calling"""
         self.tools = tools
         self.tool_executor = executor
+        if result_serializer is not None:
+            self.tool_result_serializer = result_serializer
 
     def chat(
         self,
@@ -319,27 +332,38 @@ class ChatEngine:
                     function_args = json.loads(tool_call.function.arguments)
                 except json.JSONDecodeError as e:
                     error_msg = f"Error parsing tool arguments: {str(e)}"
+                    error_result = ToolExecutionResult.from_error(
+                        error_msg,
+                        metadata={
+                            "name": function_name,
+                            "version": "1.0",
+                            "side_effects": False,
+                        },
+                    )
+                    serialized_error = self.tool_result_serializer(error_result)
                     self.conversation.add_message(
                         role="tool",
-                        content=json.dumps({"error": error_msg}),
+                        content=json.dumps(serialized_error),
                         tool_call_id=tool_call.id,
                         name=function_name,
                     )
-                    tool_results.append({"error": error_msg})
+                    tool_results.append(serialized_error)
                     continue
 
                 # Execute tool
                 result = self.tool_executor(function_name, function_args)
 
+                serialized_result = self.tool_result_serializer(result)
+
                 # Add tool response to conversation
                 self.conversation.add_message(
                     role="tool",
-                    content=json.dumps(result),
+                    content=json.dumps(serialized_result),
                     tool_call_id=tool_call.id,
                     name=function_name,
                 )
 
-                tool_results.append(result)
+                tool_results.append(serialized_result)
 
             # Get final response from model
             messages = self.conversation.get_messages()
@@ -387,6 +411,27 @@ class ChatEngine:
         finally:
             # Always decrement recursion depth, even if an exception occurred
             self.tool_call_depth -= 1
+
+    @staticmethod
+    def _default_result_serializer(result: Any) -> Dict[str, Any]:
+        """Fallback serializer for tool execution results."""
+
+        if isinstance(result, ToolExecutionResult):
+            return result.to_dict()
+
+        if isinstance(result, dict):
+            return result
+
+        stdout = "" if result is None else str(result)
+        status = TOOL_STATUS_SUCCESS if stdout else TOOL_STATUS_ERROR
+        return {
+            "status": status,
+            "stdout": stdout,
+            "stderr": "" if status == TOOL_STATUS_SUCCESS else stdout,
+            "structured_payload": None,
+            "duration": 0.0,
+            "metadata": {},
+        }
 
     def get_stats(self) -> Dict[str, Any]:
         """Get usage statistics"""

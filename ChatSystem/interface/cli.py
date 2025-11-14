@@ -46,7 +46,11 @@ class ChatCLI:
         # Register tools with chat engine
         tools = self.tool_registry.get_tools()
         executor = self.tool_registry.get_tool_executor()
-        self.chat_engine.register_tools(tools, executor)
+        self.chat_engine.register_tools(
+            tools,
+            executor,
+            result_serializer=self.tool_registry.serialize_result,
+        )
 
         # Initialize agent manager
         self.agent_manager = AgentManager(settings=self.settings)
@@ -233,7 +237,11 @@ Type your message or try these commands:
             # Register tools with new chat engine
             tools = self.tool_registry.get_tools()
             executor = self.tool_registry.get_tool_executor()
-            new_chat_engine.register_tools(tools, executor)
+            new_chat_engine.register_tools(
+                tools,
+                executor,
+                result_serializer=self.tool_registry.serialize_result,
+            )
 
             # Set new agent
             self.agent_manager.set_current_agent(agent_type, chat_engine=new_chat_engine)

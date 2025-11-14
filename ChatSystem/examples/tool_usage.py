@@ -28,7 +28,11 @@ def main():
 
     tools = tool_registry.get_tools()
     executor = tool_registry.get_tool_executor()
-    chat_engine.register_tools(tools, executor)
+    chat_engine.register_tools(
+        tools,
+        executor,
+        result_serializer=tool_registry.serialize_result,
+    )
 
     print(f"✓ Loaded {len(tools)} tools\n")
 
