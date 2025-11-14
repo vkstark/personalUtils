@@ -12,7 +12,7 @@ from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMe
 from .config import Settings, calculate_cost
 from .conversation import ConversationManager
 from .tool_metrics import ToolMetrics
-from ..tools.tool_result import ToolExecutionResult, ToolStatus
+from ..tools.tool_result import ToolExecutionResult
 
 
 class ChatEngine:
@@ -334,7 +334,7 @@ class ChatEngine:
                     continue
 
                 # Execute tool
-                result: ToolExecutionResult = self.tool_executor(function_name, function_args)
+                result = self.tool_executor(function_name, function_args)
 
                 # Record metrics for this tool
                 if function_name not in self.tool_metrics:

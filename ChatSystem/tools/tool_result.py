@@ -13,7 +13,7 @@ Every tool execution must return a ToolExecutionResult to ensure:
 from enum import Enum
 from typing import Optional, Dict, Any
 from datetime import datetime
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_serializer
 
 
 class ToolStatus(str, Enum):
@@ -80,11 +80,12 @@ class ToolExecutionResult(BaseModel):
     error_type: Optional[str] = None
 
     # Pydantic v2 configuration
-    model_config = ConfigDict(
-        json_encoders={
-            datetime: lambda v: v.isoformat()
-        }
-    )
+    model_config = ConfigDict()
+
+    @field_serializer('timestamp')
+    def serialize_timestamp(self, value: datetime) -> str:
+        """Serialize timestamp to ISO format for JSON"""
+        return value.isoformat()
 
     def is_success(self) -> bool:
         """Check if the execution was successful"""

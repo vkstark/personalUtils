@@ -65,7 +65,7 @@ class ChatCLI:
         current_agent_info = self.agent_manager.get_agent_info(self.agent_manager.current_agent_type)
 
         welcome_text = f"""
-# 🤖 ChatSystem v2.0
+# 🤖 ChatSystem v1.1
 
 **Powered by:** {self.settings.model_name}
 **Current Agent:** {current_agent_info.get('name', 'Unknown')}
@@ -247,7 +247,10 @@ Type your message or try these commands:
 
             # Color code success rate
             success_rate = metrics.get("success_rate", "0.0%")
-            success_val = float(success_rate.rstrip('%'))
+            try:
+                success_val = float(str(success_rate).rstrip('%'))
+            except (ValueError, TypeError):
+                success_val = 0.0
             if success_val >= 90:
                 rate_display = f"[green]{success_rate}[/green]"
             elif success_val >= 70:

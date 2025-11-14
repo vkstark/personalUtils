@@ -18,6 +18,9 @@ from .tool_result import ToolExecutionResult, ToolStatus
 class ToolExecutor:
     """Execute utility tools safely"""
 
+    # Timeout for tool execution in seconds
+    TOOL_EXECUTION_TIMEOUT = 60.0
+
     def __init__(self, utils_dir: Optional[str] = None):
         # Get utilities directory
         if utils_dir:
@@ -297,7 +300,7 @@ class ToolExecutor:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=self.TOOL_EXECUTION_TIMEOUT,
                 check=False,
                 shell=False  # Explicitly disable shell for security
             )
@@ -350,9 +353,9 @@ class ToolExecutor:
             return ToolExecutionResult(
                 status=ToolStatus.TIMEOUT,
                 tool_name=function_name,
-                duration=60.0,
+                duration=self.TOOL_EXECUTION_TIMEOUT,
                 command=" ".join(cmd),
-                error_message="Command timed out after 60 seconds",
+                error_message=f"Command timed out after {self.TOOL_EXECUTION_TIMEOUT} seconds",
                 error_type="TimeoutError"
             )
 
