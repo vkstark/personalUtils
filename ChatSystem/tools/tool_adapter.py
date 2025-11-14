@@ -14,7 +14,6 @@ class ToolAdapter:
         "CodeWhisper": {
             "name": "analyze_python_code",
             "description": "Analyze Python code files or directories. Provides comprehensive analysis including functions, classes, imports, complexity metrics, and code structure.",
-            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -42,7 +41,6 @@ class ToolAdapter:
         "APITester": {
             "name": "test_api_endpoint",
             "description": "Test HTTP API endpoints with various methods (GET, POST, PUT, DELETE, etc.). Returns response status, headers, and body.",
-            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -74,7 +72,6 @@ class ToolAdapter:
         "DuplicateFinder": {
             "name": "find_duplicate_files",
             "description": "Find duplicate files by hash or filename. Can filter by size and extensions.",
-            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -106,7 +103,6 @@ class ToolAdapter:
         "SnippetManager": {
             "name": "manage_code_snippets",
             "description": "Store, search, and retrieve code snippets. Supports tags and multiple programming languages.",
-            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -145,7 +141,6 @@ class ToolAdapter:
         "BulkRename": {
             "name": "bulk_rename_files",
             "description": "Batch rename files using patterns, regex, or sequential numbering.",
-            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -181,7 +176,6 @@ class ToolAdapter:
         "EnvManager": {
             "name": "manage_env_files",
             "description": "Manage .env configuration files. Parse, validate, and switch between environments.",
-            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -208,7 +202,6 @@ class ToolAdapter:
         "FileDiff": {
             "name": "compare_files",
             "description": "Compare two files or directories and show differences.",
-            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -235,7 +228,6 @@ class ToolAdapter:
         "GitStats": {
             "name": "analyze_git_repository",
             "description": "Analyze git repository statistics including commits, contributors, file changes, and activity over time.",
-            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -274,7 +266,6 @@ class ToolAdapter:
         "ImportOptimizer": {
             "name": "optimize_python_imports",
             "description": "Analyze and organize Python import statements. Can find unused imports in files/directories or show properly organized imports for a file.",
-            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -306,7 +297,6 @@ class ToolAdapter:
         "PathSketch": {
             "name": "visualize_directory_tree",
             "description": "Visualize directory structure as a tree. Shows files and folders in a hierarchical tree format with optional file sizes, permissions, and filtering.",
-            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -354,7 +344,6 @@ class ToolAdapter:
         "TodoExtractor": {
             "name": "extract_todos",
             "description": "Extract TODO, FIXME, HACK, and other comments from code files.",
-            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -388,7 +377,6 @@ class ToolAdapter:
         "DataConvert": {
             "name": "convert_data_format",
             "description": "Convert data between formats (JSON, YAML, CSV, XML, etc.).",
-            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -440,10 +428,6 @@ class ToolAdapter:
                 }
             }
 
-            # Add strict mode for structured outputs
-            if definition.get("strict"):
-                tool["function"]["strict"] = True
-
             tools.append(tool)
 
         return tools
@@ -467,7 +451,6 @@ class ToolAdapter:
                         "name": definition["name"],
                         "description": definition["description"],
                         "parameters": definition["parameters"],
-                        "strict": definition.get("strict", False),
                     }
                 }
         return None
@@ -495,9 +478,6 @@ class ToolAdapter:
                         "parameters": definition["parameters"],
                     }
                 }
-
-                if definition.get("strict"):
-                    tool["function"]["strict"] = True
 
                 tools.append(tool)
 
