@@ -13,6 +13,7 @@ from typing import Dict, Any, Optional
 from pathlib import Path
 
 from .tool_result import ToolExecutionResult, ToolStatus
+from .tool_adapter import ToolAdapter
 
 
 class ToolExecutor:
@@ -327,13 +328,8 @@ class ToolExecutor:
                 error_msg = result.stderr.strip() if result.stderr else f"Command failed with exit code {result.returncode}"
                 error_type = "SubprocessError"
 
-            # Determine if tool has side effects
-            has_side_effects = function_name in [
-                "bulk_rename_files",
-                "manage_env_files",
-                "manage_code_snippets",  # add/delete operations
-                "convert_data_format"  # writes output file
-            ]
+            # Determine if tool has side effects from tool definition
+            has_side_effects = ToolAdapter.get_tool_side_effects(function_name)
 
             return ToolExecutionResult(
                 status=status,

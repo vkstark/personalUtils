@@ -14,6 +14,7 @@ class ToolAdapter:
         "CodeWhisper": {
             "name": "analyze_python_code",
             "description": "Analyze Python code files or directories. Provides comprehensive analysis including functions, classes, imports, complexity metrics, and code structure.",
+            "has_side_effects": False,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -41,6 +42,7 @@ class ToolAdapter:
         "APITester": {
             "name": "test_api_endpoint",
             "description": "Test HTTP API endpoints with various methods (GET, POST, PUT, DELETE, etc.). Returns response status, headers, and body.",
+            "has_side_effects": False,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -72,6 +74,7 @@ class ToolAdapter:
         "DuplicateFinder": {
             "name": "find_duplicate_files",
             "description": "Find duplicate files by hash or filename. Can filter by size and extensions.",
+            "has_side_effects": False,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -103,6 +106,7 @@ class ToolAdapter:
         "SnippetManager": {
             "name": "manage_code_snippets",
             "description": "Store, search, and retrieve code snippets. Supports tags and multiple programming languages.",
+            "has_side_effects": True,  # add/delete operations modify state
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -141,6 +145,7 @@ class ToolAdapter:
         "BulkRename": {
             "name": "bulk_rename_files",
             "description": "Batch rename files using patterns, regex, or sequential numbering.",
+            "has_side_effects": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -176,6 +181,7 @@ class ToolAdapter:
         "EnvManager": {
             "name": "manage_env_files",
             "description": "Manage .env configuration files. Parse, validate, and switch between environments.",
+            "has_side_effects": True,  # set action modifies files
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -202,6 +208,7 @@ class ToolAdapter:
         "FileDiff": {
             "name": "compare_files",
             "description": "Compare two files or directories and show differences.",
+            "has_side_effects": False,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -228,6 +235,7 @@ class ToolAdapter:
         "GitStats": {
             "name": "analyze_git_repository",
             "description": "Analyze git repository statistics including commits, contributors, file changes, and activity over time.",
+            "has_side_effects": False,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -266,6 +274,7 @@ class ToolAdapter:
         "ImportOptimizer": {
             "name": "optimize_python_imports",
             "description": "Analyze and organize Python import statements. Can find unused imports in files/directories or show properly organized imports for a file.",
+            "has_side_effects": False,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -297,6 +306,7 @@ class ToolAdapter:
         "PathSketch": {
             "name": "visualize_directory_tree",
             "description": "Visualize directory structure as a tree. Shows files and folders in a hierarchical tree format with optional file sizes, permissions, and filtering.",
+            "has_side_effects": False,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -344,6 +354,7 @@ class ToolAdapter:
         "TodoExtractor": {
             "name": "extract_todos",
             "description": "Extract TODO, FIXME, HACK, and other comments from code files.",
+            "has_side_effects": False,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -377,6 +388,7 @@ class ToolAdapter:
         "DataConvert": {
             "name": "convert_data_format",
             "description": "Convert data between formats (JSON, YAML, CSV, XML, etc.).",
+            "has_side_effects": True,  # writes output file
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -482,3 +494,19 @@ class ToolAdapter:
                 tools.append(tool)
 
         return tools
+
+    @classmethod
+    def get_tool_side_effects(cls, function_name: str) -> bool:
+        """
+        Get whether a tool has side effects (modifies files/state).
+        
+        Args:
+            function_name (str): The function name of the tool
+            
+        Returns:
+            bool: True if the tool has side effects, False otherwise
+        """
+        for util_name, definition in cls.TOOL_DEFINITIONS.items():
+            if definition["name"] == function_name:
+                return definition.get("has_side_effects", False)
+        return False
