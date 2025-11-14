@@ -101,8 +101,9 @@ except Exception as e:
 # Test 6: Agent System
 print("\n6️⃣  Testing Agent System...")
 try:
-    from ChatSystem.agent.planner import TaskPlanner
-    from ChatSystem.agent.reasoner import Reasoner
+    from agents.task_executor.planner import TaskPlanner
+    from agents.task_executor.reasoner import Reasoner
+    from agents.task_executor.executor import AgentExecutor
 
     planner = TaskPlanner()
     print(f"   ✅ TaskPlanner initialized")

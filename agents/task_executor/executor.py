@@ -4,8 +4,8 @@ AgentExecutor - Execute complex multi-step tasks
 """
 
 from typing import Optional
-from ..core.chat_engine import ChatEngine
-from ..core.config import Settings
+from ChatSystem.core.chat_engine import ChatEngine
+from ChatSystem.core.config import Settings
 from .planner import TaskPlanner
 from .reasoner import Reasoner
 
