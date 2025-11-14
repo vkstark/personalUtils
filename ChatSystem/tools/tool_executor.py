@@ -23,18 +23,18 @@ class ToolExecutor:
 
         # Map function names to utility modules
         self.function_to_util = {
-            "analyze_python_code": "CodeWhisper/code_whisper.py",
-            "test_api_endpoint": "APITester/api_tester.py",
-            "find_duplicate_files": "DuplicateFinder/duplicate_finder.py",
-            "manage_code_snippets": "SnippetManager/snippet_manager.py",
-            "bulk_rename_files": "BulkRename/bulk_rename.py",
-            "manage_env_files": "EnvManager/env_manager.py",
-            "compare_files": "FileDiff/file_diff.py",
-            "analyze_git_repository": "GitStats/git_stats.py",
-            "optimize_python_imports": "ImportOptimizer/import_optimizer.py",
-            "visualize_directory_tree": "PathSketch/path_sketch.py",
-            "extract_todos": "TodoExtractor/todo_extractor.py",
-            "convert_data_format": "DataConvert/data_convert.py",
+            "analyze_python_code": "tools/CodeWhisper/code_whisper.py",
+            "test_api_endpoint": "tools/APITester/api_tester.py",
+            "find_duplicate_files": "tools/DuplicateFinder/duplicate_finder.py",
+            "manage_code_snippets": "tools/SnippetManager/snippet_manager.py",
+            "bulk_rename_files": "tools/BulkRename/bulk_rename.py",
+            "manage_env_files": "tools/EnvManager/env_manager.py",
+            "compare_files": "tools/FileDiff/file_diff.py",
+            "analyze_git_repository": "tools/GitStats/git_stats.py",
+            "optimize_python_imports": "tools/ImportOptimizer/import_optimizer.py",
+            "visualize_directory_tree": "tools/PathSketch/path_sketch.py",
+            "extract_todos": "tools/TodoExtractor/todo_extractor.py",
+            "convert_data_format": "tools/DataConvert/data_convert.py",
         }
 
     def execute(self, function_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:

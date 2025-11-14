@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from DuplicateFinder.duplicate_finder import DuplicateFinder
+from tools.DuplicateFinder.duplicate_finder import DuplicateFinder
 
 
 class TestDuplicateFinder:

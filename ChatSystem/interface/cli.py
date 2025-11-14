@@ -18,7 +18,7 @@ from ..core.config import Settings, get_settings
 from ..core.chat_engine import ChatEngine
 from ..core.conversation import ConversationManager
 from ..tools.tool_registry import ToolRegistry
-from ..agent.executor import AgentExecutor
+from agents.task_executor.executor import AgentExecutor
 
 
 class ChatCLI:

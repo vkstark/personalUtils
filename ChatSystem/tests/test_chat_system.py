@@ -129,7 +129,7 @@ class TestAgent:
 
     def test_task_planner(self):
         """Test task planner"""
-        from ChatSystem.agent.planner import TaskPlanner
+        from agents.task_executor.planner import TaskPlanner
 
         planner = TaskPlanner()
         plan = planner.create_plan("Test goal", [])
@@ -139,7 +139,7 @@ class TestAgent:
 
     def test_reasoner(self):
         """Test reasoner"""
-        from ChatSystem.agent.reasoner import Reasoner
+        from agents.task_executor.reasoner import Reasoner
 
         reasoner = Reasoner()
         reasoner.add_thought("First thought")
@@ -157,7 +157,7 @@ def test_imports():
     import ChatSystem
     from ChatSystem.core import ChatEngine, ConversationManager, Settings
     from ChatSystem.tools import ToolRegistry, ToolAdapter
-    from ChatSystem.agent import TaskPlanner, AgentExecutor, Reasoner
+    from agents.task_executor import TaskPlanner, AgentExecutor, Reasoner
 
     assert ChatEngine is not None
     assert ConversationManager is not None

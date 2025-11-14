@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from BulkRename.bulk_rename import BulkRename, RenameMode
+from tools.BulkRename.bulk_rename import BulkRename, RenameMode
 
 
 class TestBulkRename:

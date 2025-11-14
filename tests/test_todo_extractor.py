@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from TodoExtractor.todo_extractor import TodoExtractor, TodoItem
+from tools.TodoExtractor.todo_extractor import TodoExtractor, TodoItem
 
 
 class TestTodoExtractor:
