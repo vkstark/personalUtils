@@ -5,11 +5,10 @@ AgentExecutor - Execute complex multi-step tasks
 Version 1.2: Planner-backed execution with reasoning traces
 """
 
-from typing import Optional, List
+from typing import Optional
 from ChatSystem.core.chat_engine import ChatEngine
 from ChatSystem.core.config import Settings
 from ChatSystem.tools.tool_executor import ToolExecutor
-from ChatSystem.tools.tool_result import ToolExecutionResult, ToolStatus
 from .planner import TaskPlanner, TaskPlan, TaskStep
 from .reasoner import Reasoner
 

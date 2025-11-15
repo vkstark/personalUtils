@@ -15,14 +15,12 @@ Uses mocks to avoid requiring OpenAI API key.
 import sys
 import time
 from pathlib import Path
-from unittest.mock import Mock, MagicMock
-from typing import List, Dict, Any
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Import components
-from agents.task_executor.planner import TaskPlanner, TaskPlan, TaskStep
+from agents.task_executor.planner import TaskPlanner
 from agents.task_executor.reasoner import Reasoner
 
 
@@ -221,28 +219,15 @@ def test_3_multi_step_execution_simulation():
         # Simulate work
         time.sleep(0.05)
 
-        # Simulate success or conditional failure
-        if step.step_number == 3 and False:  # Disabled for now
-            # Simulate failure on step 3
-            planner.update_step_status(
-                plan,
-                step.step_number,
-                "failed",
-                error_message="Mock error for testing"
-            )
-            print(f"   ❌ Failed: Mock error")
-            plan.status = "failed"
-            break
-        else:
-            # Success
-            result = f"Step {step.step_number} completed successfully"
-            planner.update_step_status(
-                plan,
-                step.step_number,
-                "done",
-                result=result
-            )
-            print(f"   ✅ Done: {result}")
+        # Simulate success
+        result = f"Step {step.step_number} completed successfully"
+        planner.update_step_status(
+            plan,
+            step.step_number,
+            "done",
+            result=result
+        )
+        print(f"   ✅ Done: {result}")
 
     # Check final status
     if planner.is_plan_complete(plan):

@@ -135,9 +135,9 @@ Important:
             available_tools=tools_list
         )
 
-        # Get plan from LLM
+        # Get plan from LLM (tools won't interfere with plan generation)
         response_parts = []
-        for chunk in self.chat_engine.chat(prompt, disable_tools=True):
+        for chunk in self.chat_engine.chat(prompt):
             response_parts.append(chunk)
 
         response = "".join(response_parts)

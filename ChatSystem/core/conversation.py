@@ -5,10 +5,13 @@ Conversation Manager - Handle message history and context
 
 import json
 import tiktoken
-from typing import List, Dict, Any, Optional, Literal
+from typing import List, Dict, Any, Optional, Literal, TYPE_CHECKING
 from datetime import datetime
 from pathlib import Path
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from ChatSystem.core.chat_engine import ChatEngine
 
 
 class Message(BaseModel):
@@ -430,7 +433,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             "last_message_at": self.messages[-1].timestamp if self.messages else None,
         }
 
-    def summarize_conversation(self, chat_engine=None, target_ratio: float = 0.5) -> str:
+    def summarize_conversation(self, chat_engine: Optional['ChatEngine'] = None, target_ratio: float = 0.5) -> str:
         """
         Summarize the conversation to reduce token usage.
 
@@ -458,10 +461,6 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             # Too few messages to summarize meaningfully
             return "Conversation too short to summarize"
 
-        # Calculate current token count
-        current_tokens = self.count_tokens()
-        target_tokens = int(current_tokens * target_ratio)
-
         # Determine split point - keep recent 30% of messages, summarize the rest
         keep_recent_count = max(3, int(len(other_messages) * 0.3))
         messages_to_summarize = other_messages[:-keep_recent_count]
@@ -488,7 +487,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         return summary_text
 
-    def _llm_summarize(self, chat_engine, messages: List[Message]) -> str:
+    def _llm_summarize(self, chat_engine: 'ChatEngine', messages: List[Message]) -> str:
         """
         Use LLM to create an intelligent summary of messages.
 
@@ -517,9 +516,9 @@ Provide a concise summary in 3-5 paragraphs that captures:
 3. Important facts or data mentioned
 4. Any ongoing tasks or action items"""
 
-        # Get summary from LLM (disable tools for this)
+        # Get summary from LLM
         response_parts = []
-        for chunk in chat_engine.chat(prompt, stream=False):
+        for chunk in chat_engine.chat(prompt):
             response_parts.append(chunk)
 
         return "".join(response_parts)
@@ -558,7 +557,7 @@ Provide a concise summary in 3-5 paragraphs that captures:
 
         return "\n".join(summary_lines)
 
-    def auto_summarize_if_needed(self, chat_engine=None, threshold: float = 0.85) -> bool:
+    def auto_summarize_if_needed(self, chat_engine: Optional['ChatEngine'] = None, threshold: float = 0.85) -> bool:
         """
         Automatically summarize conversation if token usage exceeds threshold.
 
@@ -571,6 +570,11 @@ Provide a concise summary in 3-5 paragraphs that captures:
             bool: True if summarization was performed, False otherwise
         """
         usage = self.get_context_window_usage()
+
+        # Avoid division by zero
+        if usage["max_tokens"] == 0:
+            return False
+
         usage_ratio = usage["total_tokens"] / usage["max_tokens"]
 
         if usage_ratio >= threshold:
