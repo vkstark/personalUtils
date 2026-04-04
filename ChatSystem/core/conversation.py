@@ -8,7 +8,7 @@ import tiktoken
 from typing import List, Dict, Any, Optional, Literal, TYPE_CHECKING
 from datetime import datetime
 from pathlib import Path
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 if TYPE_CHECKING:
     from ChatSystem.core.chat_engine import ChatEngine
@@ -38,6 +38,37 @@ class Message(BaseModel):
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_call_id: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.now)
+    _tokens: Optional[int] = PrivateAttr(default=None)
+
+    def get_token_count(self, encoding: Any) -> int:
+        """
+        Calculates and caches the token count for this message.
+
+        Args:
+            encoding: The tiktoken encoding to use.
+
+        Returns:
+            int: The token count for this message.
+        """
+        if self._tokens is not None:
+            return self._tokens
+
+        tokens = 0
+        # Count tokens in content
+        if self.content:
+            tokens += len(encoding.encode(self.content))
+
+        # Count tokens in tool calls
+        if self.tool_calls:
+            for tool_call in self.tool_calls:
+                tool_str = json.dumps(tool_call)
+                tokens += len(encoding.encode(tool_str))
+
+        # Add overhead for message structure (approximate)
+        tokens += 4
+
+        self._tokens = tokens
+        return tokens
 
     def to_openai_format(self) -> Dict[str, Any]:
         """
@@ -112,6 +143,7 @@ class ConversationManager:
         self.max_tokens = max_tokens
         self.messages: List[Message] = []
         self.auto_save = auto_save
+        self._total_tokens = 0
 
         # Set up history file
         if history_file:
@@ -200,6 +232,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         )
 
         self.messages.append(message)
+        self._total_tokens += message.get_token_count(self.encoding)
 
         # Auto-save if enabled
         if self.auto_save:
@@ -242,24 +275,13 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             int: The total number of tokens.
         """
         if messages is None:
-            messages = self.messages
+            return self._total_tokens
 
-        # Approximate token count for messages
+        # Approximate token count for specified messages
         total_tokens = 0
 
         for message in messages:
-            # Count tokens in content
-            if message.content:
-                total_tokens += len(self.encoding.encode(message.content))
-
-            # Count tokens in tool calls
-            if message.tool_calls:
-                for tool_call in message.tool_calls:
-                    tool_str = json.dumps(tool_call)
-                    total_tokens += len(self.encoding.encode(tool_str))
-
-            # Add overhead for message structure (approximate)
-            total_tokens += 4
+            total_tokens += message.get_token_count(self.encoding)
 
         return total_tokens
 
@@ -297,15 +319,24 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         if target_tokens is None:
             target_tokens = int(self.max_tokens * 0.8)  # Leave 20% headroom
 
+        # If current usage is within limits, do nothing
+        if self._total_tokens <= target_tokens:
+            return
+
         # Always keep system message
         system_messages = [m for m in self.messages if m.role == "system"]
         other_messages = [m for m in self.messages if m.role != "system"]
 
+        # Track tokens as we remove messages
+        current_tokens = self._total_tokens
+
         # Remove oldest messages until we fit
-        while self.count_tokens() > target_tokens and len(other_messages) > 1:
-            other_messages.pop(0)
+        while current_tokens > target_tokens and len(other_messages) > 1:
+            removed_msg = other_messages.pop(0)
+            current_tokens -= removed_msg.get_token_count(self.encoding)
 
         self.messages = system_messages + other_messages
+        self._total_tokens = current_tokens
 
     def clear_history(self, keep_system: bool = True):
         """
@@ -324,6 +355,8 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         else:
             self.messages = []
             self._add_default_system_prompt()
+
+        self._total_tokens = self.count_tokens(self.messages)
 
         if self.auto_save:
             self._save_history()
@@ -375,6 +408,8 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
                 message = Message(**msg_data)
                 self.messages.append(message)
+
+            self._total_tokens = self.count_tokens(self.messages)
 
         except Exception as e:
             print(f"Warning: Could not load history: {e}")
@@ -481,6 +516,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         # Replace messages with summary + kept messages
         self.messages = system_messages + [summary_message] + messages_to_keep
+        self._total_tokens = self.count_tokens(self.messages)
 
         if self.auto_save:
             self._save_history()
