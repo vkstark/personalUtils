@@ -5,6 +5,7 @@ Conversation Manager - Handle message history and context
 
 import json
 import tiktoken
+from contextlib import contextmanager
 from typing import List, Dict, Any, Optional, Literal, TYPE_CHECKING
 from datetime import datetime
 from pathlib import Path
@@ -144,6 +145,8 @@ class ConversationManager:
         self.messages: List[Message] = []
         self.auto_save = auto_save
         self._total_tokens = 0
+        self._batch_depth = 0
+        self._needs_save = False
 
         # Set up history file
         if history_file:
@@ -361,7 +364,24 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         if self.auto_save:
             self._save_history()
 
-    def _save_history(self):
+    @contextmanager
+    def batch_saves(self):
+        """
+        Context manager to batch multiple message additions into a single save operation.
+
+        This is useful for operations that add multiple messages in a row
+        (like tool calls) to avoid redundant disk I/O.
+        """
+        self._batch_depth += 1
+        try:
+            yield
+        finally:
+            self._batch_depth -= 1
+            if self._batch_depth == 0 and self._needs_save:
+                self._save_history()
+                self._needs_save = False
+
+    def _save_history(self, force: bool = False):
         """
         Saves the current conversation history to a JSON file.
 
@@ -369,7 +389,14 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         This method handles the creation of the parent directory if it does not
         exist. Any exceptions during the save process are caught and printed as
         warnings.
+
+        Args:
+            force (bool): If True, perform save even if in a batch.
         """
+        if self._batch_depth > 0 and not force:
+            self._needs_save = True
+            return
+
         try:
             # Create directory if it doesn't exist
             self.history_file.parent.mkdir(parents=True, exist_ok=True)
