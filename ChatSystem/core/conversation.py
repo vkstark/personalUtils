@@ -5,6 +5,7 @@ Conversation Manager - Handle message history and context
 
 import json
 import tiktoken
+from contextlib import contextmanager
 from typing import List, Dict, Any, Optional, Literal, TYPE_CHECKING
 from datetime import datetime
 from pathlib import Path
@@ -151,6 +152,8 @@ class ConversationManager:
         else:
             self.history_file = Path.home() / ".chatsystem_history.json"
 
+        self._batch_save_depth = 0
+
         # Initialize tokenizer
         try:
             self.encoding = tiktoken.encoding_for_model(model)
@@ -167,6 +170,26 @@ class ConversationManager:
         # Load previous history if available
         if self.auto_save and self.history_file.exists():
             self._load_history()
+
+    @contextmanager
+    def batch_saves(self):
+        """
+        Context manager to batch multiple history saves into a single write operation.
+
+        Increments a batch depth counter on entry and decrements it on exit.
+        A disk write is only performed when the counter returns to zero,
+        ensuring that only the final state is persisted.
+
+        Yields:
+            None
+        """
+        self._batch_save_depth += 1
+        try:
+            yield
+        finally:
+            self._batch_save_depth -= 1
+            if self._batch_save_depth == 0 and self.auto_save:
+                self._save_history()
 
     def _add_default_system_prompt(self):
         """
@@ -234,8 +257,8 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         self.messages.append(message)
         self._total_tokens += message.get_token_count(self.encoding)
 
-        # Auto-save if enabled
-        if self.auto_save:
+        # Auto-save if enabled and not in a batch
+        if self.auto_save and self._batch_save_depth == 0:
             self._save_history()
 
         return message
@@ -358,7 +381,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         self._total_tokens = self.count_tokens(self.messages)
 
-        if self.auto_save:
+        if self.auto_save and self._batch_save_depth == 0:
             self._save_history()
 
     def _save_history(self):
@@ -518,7 +541,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         self.messages = system_messages + [summary_message] + messages_to_keep
         self._total_tokens = self.count_tokens(self.messages)
 
-        if self.auto_save:
+        if self.auto_save and self._batch_save_depth == 0:
             self._save_history()
 
         return summary_text
