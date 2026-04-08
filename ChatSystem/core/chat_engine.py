@@ -159,14 +159,15 @@ class ChatEngine:
         Yields:
             Iterator[str]: An iterator containing the single, complete response.
         """
-        response, tool_calls_handled = self._chat_completion(model, max_tokens, temperature)
+        with self.conversation.batch_saves():
+            response, tool_calls_handled = self._chat_completion(model, max_tokens, temperature)
 
-        # Add assistant response only if tools weren't used
-        # Tool handling adds its own messages to the conversation
-        if not tool_calls_handled and response:
-            self.conversation.add_message(role="assistant", content=response)
+            # Add assistant response only if tools weren't used
+            # Tool handling adds its own messages to the conversation
+            if not tool_calls_handled and response:
+                self.conversation.add_message(role="assistant", content=response)
 
-        yield response
+            yield response
 
     def _chat_generator(self, model: str, max_tokens: int, temperature: float) -> Iterator[str]:
         """
@@ -186,15 +187,16 @@ class ChatEngine:
         full_response = ""
         had_tool_calls = False
 
-        for chunk, is_tool_response in self._chat_stream(model, max_tokens, temperature):
-            full_response += chunk
-            had_tool_calls = is_tool_response
-            yield chunk
+        with self.conversation.batch_saves():
+            for chunk, is_tool_response in self._chat_stream(model, max_tokens, temperature):
+                full_response += chunk
+                had_tool_calls = is_tool_response
+                yield chunk
 
-        # Add assistant response only if tools weren't used
-        # Tool handling adds its own messages to the conversation
-        if not had_tool_calls and full_response:
-            self.conversation.add_message(role="assistant", content=full_response)
+            # Add assistant response only if tools weren't used
+            # Tool handling adds its own messages to the conversation
+            if not had_tool_calls and full_response:
+                self.conversation.add_message(role="assistant", content=full_response)
 
     def _chat_completion(
         self, model: str, max_tokens: int, temperature: float
@@ -421,54 +423,58 @@ class ChatEngine:
         try:
             self.stats["tool_calls_made"] += len(tool_calls)
 
-            # Add assistant message with tool calls
-            self.conversation.add_message(
-                role="assistant",
-                content=None,
-                tool_calls=[tc.model_dump() for tc in tool_calls],
-            )
+            # Durability Pattern: Wrap tool execution and message adding in batch_saves
+            # but exit it BEFORE the final OpenAI call to ensure results are saved to disk
+            # even if the network call fails.
+            with self.conversation.batch_saves():
+                # Add assistant message with tool calls
+                self.conversation.add_message(
+                    role="assistant",
+                    content=None,
+                    tool_calls=[tc.model_dump() for tc in tool_calls],
+                )
 
-            # Execute each tool call
-            tool_results = []
+                # Execute each tool call
+                tool_results = []
 
-            for tool_call in tool_calls:
-                function_name = tool_call.function.name
+                for tool_call in tool_calls:
+                    function_name = tool_call.function.name
 
-                # Parse function arguments with error handling
-                try:
-                    function_args = json.loads(tool_call.function.arguments)
-                except json.JSONDecodeError as e:
-                    error_msg = f"Error parsing tool arguments: {str(e)}"
+                    # Parse function arguments with error handling
+                    try:
+                        function_args = json.loads(tool_call.function.arguments)
+                    except json.JSONDecodeError as e:
+                        error_msg = f"Error parsing tool arguments: {str(e)}"
+                        self.conversation.add_message(
+                            role="tool",
+                            content=json.dumps({"error": error_msg}),
+                            tool_call_id=tool_call.id,
+                            name=function_name,
+                        )
+                        tool_results.append({"error": error_msg})
+                        continue
+
+                    # Execute tool
+                    result: ToolExecutionResult = self.tool_executor(function_name, function_args)
+
+                    # Record metrics for this tool
+                    if function_name not in self.tool_metrics:
+                        self.tool_metrics[function_name] = ToolMetrics(tool_name=function_name)
+                    self.tool_metrics[function_name].record_execution(result)
+
+                    # Convert ToolExecutionResult to dict for conversation
+                    # Use legacy format for backward compatibility with OpenAI API
+                    result_dict = result.to_legacy_dict()
+
+                    # Add tool response to conversation
                     self.conversation.add_message(
                         role="tool",
-                        content=json.dumps({"error": error_msg}),
+                        content=json.dumps(result_dict),
                         tool_call_id=tool_call.id,
                         name=function_name,
                     )
-                    tool_results.append({"error": error_msg})
-                    continue
 
-                # Execute tool
-                result: ToolExecutionResult = self.tool_executor(function_name, function_args)
-
-                # Record metrics for this tool
-                if function_name not in self.tool_metrics:
-                    self.tool_metrics[function_name] = ToolMetrics(tool_name=function_name)
-                self.tool_metrics[function_name].record_execution(result)
-
-                # Convert ToolExecutionResult to dict for conversation
-                # Use legacy format for backward compatibility with OpenAI API
-                result_dict = result.to_legacy_dict()
-
-                # Add tool response to conversation
-                self.conversation.add_message(
-                    role="tool",
-                    content=json.dumps(result_dict),
-                    tool_call_id=tool_call.id,
-                    name=function_name,
-                )
-
-                tool_results.append(result_dict)
+                    tool_results.append(result_dict)
 
             # Get final response from model
             messages = self.conversation.get_messages()
