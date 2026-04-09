@@ -5,6 +5,7 @@ Conversation Manager - Handle message history and context
 
 import json
 import tiktoken
+from contextlib import contextmanager
 from typing import List, Dict, Any, Optional, Literal, TYPE_CHECKING
 from datetime import datetime
 from pathlib import Path
@@ -144,6 +145,8 @@ class ConversationManager:
         self.messages: List[Message] = []
         self.auto_save = auto_save
         self._total_tokens = 0
+        self._batch_save_count = 0
+        self._needs_save = False
 
         # Set up history file
         if history_file:
@@ -234,9 +237,8 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         self.messages.append(message)
         self._total_tokens += message.get_token_count(self.encoding)
 
-        # Auto-save if enabled
-        if self.auto_save:
-            self._save_history()
+        # Trigger save (respects batching)
+        self._trigger_save()
 
         return message
 
@@ -358,7 +360,44 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         self._total_tokens = self.count_tokens(self.messages)
 
-        if self.auto_save:
+        self._trigger_save()
+
+    @contextmanager
+    def batch_saves(self):
+        """
+        A context manager that defers history saves until the end of the block.
+
+        This is used to group multiple consecutive message additions or
+        history modifications into a single disk write operation, improving
+        performance and reducing write amplification.
+
+        Usage:
+            with conversation.batch_saves():
+                conversation.add_message(...)
+                conversation.add_message(...)
+        """
+        self._batch_save_count += 1
+        try:
+            yield
+        finally:
+            self._batch_save_count -= 1
+            if self._batch_save_count == 0 and self._needs_save:
+                self._save_history()
+                self._needs_save = False
+
+    def _trigger_save(self):
+        """
+        Triggers a history save, respecting the batch_saves context.
+
+        If we are inside a batch_saves block, the save is deferred.
+        Otherwise, the save happens immediately.
+        """
+        if not self.auto_save:
+            return
+
+        if self._batch_save_count > 0:
+            self._needs_save = True
+        else:
             self._save_history()
 
     def _save_history(self):
@@ -518,8 +557,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         self.messages = system_messages + [summary_message] + messages_to_keep
         self._total_tokens = self.count_tokens(self.messages)
 
-        if self.auto_save:
-            self._save_history()
+        self._trigger_save()
 
         return summary_text
 
