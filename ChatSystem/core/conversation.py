@@ -6,6 +6,7 @@ Conversation Manager - Handle message history and context
 import json
 import tiktoken
 from typing import List, Dict, Any, Optional, Literal, TYPE_CHECKING
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from pydantic import BaseModel, Field, PrivateAttr
@@ -144,6 +145,8 @@ class ConversationManager:
         self.messages: List[Message] = []
         self.auto_save = auto_save
         self._total_tokens = 0
+        self._batch_save_count = 0
+        self._needs_save = False
 
         # Set up history file
         if history_file:
@@ -361,6 +364,25 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         if self.auto_save:
             self._save_history()
 
+    @contextmanager
+    def batch_saves(self):
+        """
+        Context manager to batch multiple history saves into a single disk write.
+
+        Usage:
+            with conversation_manager.batch_saves():
+                conversation_manager.add_message(...)
+                conversation_manager.add_message(...)
+            # History is saved only once here
+        """
+        self._batch_save_count += 1
+        try:
+            yield
+        finally:
+            self._batch_save_count -= 1
+            if self._batch_save_count == 0 and self._needs_save:
+                self._save_history()
+
     def _save_history(self):
         """
         Saves the current conversation history to a JSON file.
@@ -370,6 +392,11 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         exist. Any exceptions during the save process are caught and printed as
         warnings.
         """
+        # If we are in a batch, just record that we need to save and return
+        if self._batch_save_count > 0:
+            self._needs_save = True
+            return
+
         try:
             # Create directory if it doesn't exist
             self.history_file.parent.mkdir(parents=True, exist_ok=True)
@@ -383,6 +410,9 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
             with open(self.history_file, "w", encoding="utf-8") as f:
                 json.dump(history_data, f, indent=2, default=str)
+
+            # Reset needs_save flag after successful write
+            self._needs_save = False
 
         except Exception as e:
             print(f"Warning: Could not save history: {e}")
