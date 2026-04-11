@@ -421,54 +421,57 @@ class ChatEngine:
         try:
             self.stats["tool_calls_made"] += len(tool_calls)
 
-            # Add assistant message with tool calls
-            self.conversation.add_message(
-                role="assistant",
-                content=None,
-                tool_calls=[tc.model_dump() for tc in tool_calls],
-            )
+            # Group tool call message and all tool results into a single disk write
+            # while ensuring they are saved before the final API call for durability.
+            with self.conversation.batch_saves():
+                # Add assistant message with tool calls
+                self.conversation.add_message(
+                    role="assistant",
+                    content=None,
+                    tool_calls=[tc.model_dump() for tc in tool_calls],
+                )
 
-            # Execute each tool call
-            tool_results = []
+                # Execute each tool call
+                tool_results = []
 
-            for tool_call in tool_calls:
-                function_name = tool_call.function.name
+                for tool_call in tool_calls:
+                    function_name = tool_call.function.name
 
-                # Parse function arguments with error handling
-                try:
-                    function_args = json.loads(tool_call.function.arguments)
-                except json.JSONDecodeError as e:
-                    error_msg = f"Error parsing tool arguments: {str(e)}"
+                    # Parse function arguments with error handling
+                    try:
+                        function_args = json.loads(tool_call.function.arguments)
+                    except json.JSONDecodeError as e:
+                        error_msg = f"Error parsing tool arguments: {str(e)}"
+                        self.conversation.add_message(
+                            role="tool",
+                            content=json.dumps({"error": error_msg}),
+                            tool_call_id=tool_call.id,
+                            name=function_name,
+                        )
+                        tool_results.append({"error": error_msg})
+                        continue
+
+                    # Execute tool
+                    result: ToolExecutionResult = self.tool_executor(function_name, function_args)
+
+                    # Record metrics for this tool
+                    if function_name not in self.tool_metrics:
+                        self.tool_metrics[function_name] = ToolMetrics(tool_name=function_name)
+                    self.tool_metrics[function_name].record_execution(result)
+
+                    # Convert ToolExecutionResult to dict for conversation
+                    # Use legacy format for backward compatibility with OpenAI API
+                    result_dict = result.to_legacy_dict()
+
+                    # Add tool response to conversation
                     self.conversation.add_message(
                         role="tool",
-                        content=json.dumps({"error": error_msg}),
+                        content=json.dumps(result_dict),
                         tool_call_id=tool_call.id,
                         name=function_name,
                     )
-                    tool_results.append({"error": error_msg})
-                    continue
 
-                # Execute tool
-                result: ToolExecutionResult = self.tool_executor(function_name, function_args)
-
-                # Record metrics for this tool
-                if function_name not in self.tool_metrics:
-                    self.tool_metrics[function_name] = ToolMetrics(tool_name=function_name)
-                self.tool_metrics[function_name].record_execution(result)
-
-                # Convert ToolExecutionResult to dict for conversation
-                # Use legacy format for backward compatibility with OpenAI API
-                result_dict = result.to_legacy_dict()
-
-                # Add tool response to conversation
-                self.conversation.add_message(
-                    role="tool",
-                    content=json.dumps(result_dict),
-                    tool_call_id=tool_call.id,
-                    name=function_name,
-                )
-
-                tool_results.append(result_dict)
+                    tool_results.append(result_dict)
 
             # Get final response from model
             messages = self.conversation.get_messages()
