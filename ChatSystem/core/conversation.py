@@ -5,6 +5,7 @@ Conversation Manager - Handle message history and context
 
 import json
 import tiktoken
+import contextlib
 from typing import List, Dict, Any, Optional, Literal, TYPE_CHECKING
 from datetime import datetime
 from pathlib import Path
@@ -144,6 +145,8 @@ class ConversationManager:
         self.messages: List[Message] = []
         self.auto_save = auto_save
         self._total_tokens = 0
+        self._batch_save_count = 0
+        self._needs_save = False
 
         # Set up history file
         if history_file:
@@ -361,6 +364,24 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         if self.auto_save:
             self._save_history()
 
+    @contextlib.contextmanager
+    def batch_saves(self):
+        """
+        Context manager to group multiple message additions into a single disk write.
+
+        When inside this context, calls to `_save_history()` will be deferred until
+        the outermost `batch_saves` block exits. This significantly reduces disk
+        I/O during multi-step operations like tool calls.
+        """
+        self._batch_save_count += 1
+        try:
+            yield
+        finally:
+            self._batch_save_count -= 1
+            if self._batch_save_count == 0 and self._needs_save:
+                self._needs_save = False
+                self._save_history()
+
     def _save_history(self):
         """
         Saves the current conversation history to a JSON file.
@@ -370,6 +391,11 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         exist. Any exceptions during the save process are caught and printed as
         warnings.
         """
+        # If we are in a batch save block, defer the actual write
+        if self._batch_save_count > 0:
+            self._needs_save = True
+            return
+
         try:
             # Create directory if it doesn't exist
             self.history_file.parent.mkdir(parents=True, exist_ok=True)
