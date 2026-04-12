@@ -5,7 +5,7 @@ Conversation Manager - Handle message history and context
 
 import json
 import tiktoken
-from contextlib import contextmanager
+import contextlib
 from typing import List, Dict, Any, Optional, Literal, TYPE_CHECKING
 from datetime import datetime
 from pathlib import Path
@@ -145,14 +145,14 @@ class ConversationManager:
         self.messages: List[Message] = []
         self.auto_save = auto_save
         self._total_tokens = 0
+        self._batch_save_count = 0
+        self._needs_save = False
 
         # Set up history file
         if history_file:
             self.history_file = Path(history_file)
         else:
             self.history_file = Path.home() / ".chatsystem_history.json"
-
-        self._batch_save_depth = 0
 
         # Initialize tokenizer
         try:
@@ -171,25 +171,22 @@ class ConversationManager:
         if self.auto_save and self.history_file.exists():
             self._load_history()
 
-    @contextmanager
+    @contextlib.contextmanager
     def batch_saves(self):
         """
-        Context manager to batch multiple history saves into a single write operation.
+        Context manager to batch multiple history saves into a single write.
 
-        Increments a batch depth counter on entry and decrements it on exit.
-        A disk write is only performed when the counter returns to zero,
-        ensuring that only the final state is persisted.
-
-        Yields:
-            None
+        This is useful when adding multiple messages in a row (e.g., during tool calls)
+        to avoid redundant disk I/O.
         """
-        self._batch_save_depth += 1
+        self._batch_save_count += 1
         try:
             yield
         finally:
-            self._batch_save_depth -= 1
-            if self._batch_save_depth == 0 and self.auto_save:
-                self._save_history()
+            self._batch_save_count -= 1
+            if self._batch_save_count == 0 and self._needs_save:
+                if self.auto_save:
+                    self._save_history()
 
     def _add_default_system_prompt(self):
         """
@@ -257,8 +254,8 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         self.messages.append(message)
         self._total_tokens += message.get_token_count(self.encoding)
 
-        # Auto-save if enabled and not in a batch
-        if self.auto_save and self._batch_save_depth == 0:
+        # Auto-save if enabled
+        if self.auto_save:
             self._save_history()
 
         return message
@@ -381,7 +378,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         self._total_tokens = self.count_tokens(self.messages)
 
-        if self.auto_save and self._batch_save_depth == 0:
+        if self.auto_save:
             self._save_history()
 
     def _save_history(self):
@@ -393,6 +390,12 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         exist. Any exceptions during the save process are caught and printed as
         warnings.
         """
+        if self._batch_save_count > 0:
+            self._needs_save = True
+            return
+
+        self._needs_save = False
+
         try:
             # Create directory if it doesn't exist
             self.history_file.parent.mkdir(parents=True, exist_ok=True)
@@ -541,7 +544,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         self.messages = system_messages + [summary_message] + messages_to_keep
         self._total_tokens = self.count_tokens(self.messages)
 
-        if self.auto_save and self._batch_save_depth == 0:
+        if self.auto_save:
             self._save_history()
 
         return summary_text
