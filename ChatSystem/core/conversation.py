@@ -5,6 +5,7 @@ Conversation Manager - Handle message history and context
 
 import json
 import tiktoken
+import contextlib
 from typing import List, Dict, Any, Optional, Literal, TYPE_CHECKING
 from datetime import datetime
 from pathlib import Path
@@ -144,6 +145,8 @@ class ConversationManager:
         self.messages: List[Message] = []
         self.auto_save = auto_save
         self._total_tokens = 0
+        self._batch_save_count = 0
+        self._needs_save = False
 
         # Set up history file
         if history_file:
@@ -370,6 +373,12 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         exist. Any exceptions during the save process are caught and printed as
         warnings.
         """
+        if self._batch_save_count > 0:
+            self._needs_save = True
+            return
+
+        self._needs_save = False
+
         try:
             # Create directory if it doesn't exist
             self.history_file.parent.mkdir(parents=True, exist_ok=True)
@@ -467,6 +476,22 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             "started_at": self.messages[0].timestamp if self.messages else None,
             "last_message_at": self.messages[-1].timestamp if self.messages else None,
         }
+
+    @contextlib.contextmanager
+    def batch_saves(self):
+        """
+        Context manager to batch multiple history saves into a single write.
+
+        This is useful when adding multiple messages in a row (e.g., during tool calls)
+        to avoid redundant disk I/O.
+        """
+        self._batch_save_count += 1
+        try:
+            yield
+        finally:
+            self._batch_save_count -= 1
+            if self._batch_save_count == 0 and self._needs_save:
+                self._save_history()
 
     def summarize_conversation(self, chat_engine: Optional['ChatEngine'] = None, target_ratio: float = 0.5) -> str:
         """
