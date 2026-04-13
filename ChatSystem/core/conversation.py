@@ -39,7 +39,7 @@ class Message(BaseModel):
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_call_id: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.now)
-    _tokens: Optional[int] = PrivateAttr(default=None)
+    tokens: Optional[int] = None
 
     def get_token_count(self, encoding: Any) -> int:
         """
@@ -51,8 +51,8 @@ class Message(BaseModel):
         Returns:
             int: The token count for this message.
         """
-        if self._tokens is not None:
-            return self._tokens
+        if self.tokens is not None:
+            return self.tokens
 
         tokens = 0
         # Count tokens in content
@@ -68,7 +68,7 @@ class Message(BaseModel):
         # Add overhead for message structure (approximate)
         tokens += 4
 
-        self._tokens = tokens
+        self.tokens = tokens
         return tokens
 
     def to_openai_format(self) -> Dict[str, Any]:
@@ -333,12 +333,15 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         # Track tokens as we remove messages
         current_tokens = self._total_tokens
 
-        # Remove oldest messages until we fit
-        while current_tokens > target_tokens and len(other_messages) > 1:
-            removed_msg = other_messages.pop(0)
-            current_tokens -= removed_msg.get_token_count(self.encoding)
+        # Identify how many messages to remove
+        num_to_remove = 0
+        while current_tokens > target_tokens and num_to_remove < len(other_messages) - 1:
+            current_tokens -= other_messages[num_to_remove].get_token_count(self.encoding)
+            num_to_remove += 1
 
-        self.messages = system_messages + other_messages
+        if num_to_remove > 0:
+            self.messages = system_messages + other_messages[num_to_remove:]
+
         self._total_tokens = current_tokens
 
     def clear_history(self, keep_system: bool = True):
