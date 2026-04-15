@@ -4,6 +4,7 @@ ChatEngine - OpenAI GPT integration with streaming and function calling
 """
 
 import json
+import concurrent.futures
 from typing import Optional, Dict, Any, List, Iterator, Callable
 from openai import OpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
@@ -381,6 +382,58 @@ class ChatEngine:
 
             yield "\n\n" + tool_response, True
 
+    def _execute_single_tool_call(
+        self,
+        tool_call: ChatCompletionMessageToolCall
+    ) -> Dict[str, Any]:
+        """
+        Internal helper to execute a single tool call and update state.
+        This method is designed to be called sequentially to maintain history order.
+        """
+        function_name = tool_call.function.name
+
+        # 1. Parse arguments
+        try:
+            function_args = json.loads(tool_call.function.arguments)
+        except json.JSONDecodeError as e:
+            error_msg = f"Error parsing tool arguments: {str(e)}"
+            self.conversation.add_message(
+                role="tool",
+                content=json.dumps({"error": error_msg}),
+                tool_call_id=tool_call.id,
+                name=function_name,
+            )
+            return {"error": error_msg}
+
+        # 2. Execute tool (blocking call)
+        try:
+            result: ToolExecutionResult = self.tool_executor(function_name, function_args)
+        except Exception as e:
+            error_msg = f"Error executing tool {function_name}: {str(e)}"
+            self.conversation.add_message(
+                role="tool",
+                content=json.dumps({"error": error_msg}),
+                tool_call_id=tool_call.id,
+                name=function_name,
+            )
+            return {"error": error_msg}
+
+        # 3. Record metrics
+        if function_name not in self.tool_metrics:
+            self.tool_metrics[function_name] = ToolMetrics(tool_name=function_name)
+        self.tool_metrics[function_name].record_execution(result)
+
+        # 4. Update conversation
+        result_dict = result.to_legacy_dict()
+        self.conversation.add_message(
+            role="tool",
+            content=json.dumps(result_dict),
+            tool_call_id=tool_call.id,
+            name=function_name,
+        )
+
+        return result_dict
+
     def _handle_tool_calls(
         self,
         tool_calls: List[ChatCompletionMessageToolCall],
@@ -390,24 +443,7 @@ class ChatEngine:
     ) -> str:
         """
         Handles the execution of tool calls requested by the model.
-
-        This method iterates through the tool calls, executes them using the
-        registered `tool_executor`, and sends the results back to the model
-        to get a final, consolidated response. It also includes protection
-        against infinite recursion of tool calls.
-
-        Args:
-            tool_calls (List[ChatCompletionMessageToolCall]): The list of tool
-                calls to execute.
-            model (str): The model to use for the follow-up call.
-            max_tokens (int): The maximum tokens for the follow-up call.
-            temperature (float): The sampling temperature for the follow-up call.
-
-        Returns:
-            str: The final response from the model after processing the tool
-            call results.
         """
-
         if not self.tool_executor:
             return "Error: Tool executor not configured"
 
@@ -415,9 +451,8 @@ class ChatEngine:
         self.tool_call_depth += 1
         if self.tool_call_depth > self.max_tool_call_depth:
             self.tool_call_depth -= 1
-            return f"Error: Maximum tool call depth ({self.max_tool_call_depth}) exceeded. Stopping to prevent infinite recursion."
+            return f"Error: Maximum tool call depth ({self.max_tool_call_depth}) exceeded."
 
-        # Use try/finally to ensure recursion depth is always decremented
         try:
             self.stats["tool_calls_made"] += len(tool_calls)
 
@@ -430,49 +465,55 @@ class ChatEngine:
                     tool_calls=[tc.model_dump() for tc in tool_calls],
                 )
 
-                # Execute each tool call
                 tool_results = []
 
-                for tool_call in tool_calls:
-                    function_name = tool_call.function.name
+                # Execute tool calls
+                if self.settings.parallel_tool_calls and len(tool_calls) > 1:
+                    # Parallel execution (I/O bound tools)
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        # Submit only the tool execution itself to threads
+                        # Parsing and state updates remain in main thread for safety
+                        futures_map = {}
+                        for tc in tool_calls:
+                            try:
+                                args = json.loads(tc.function.arguments)
+                                future = executor.submit(self.tool_executor, tc.function.name, args)
+                                futures_map[tc.id] = future
+                            except json.JSONDecodeError:
+                                futures_map[tc.id] = None # Will be handled during sequential collection
 
-                    # Parse function arguments with error handling
-                    try:
-                        function_args = json.loads(tool_call.function.arguments)
-                    except json.JSONDecodeError as e:
-                        error_msg = f"Error parsing tool arguments: {str(e)}"
-                        self.conversation.add_message(
-                            role="tool",
-                            content=json.dumps({"error": error_msg}),
-                            tool_call_id=tool_call.id,
-                            name=function_name,
-                        )
-                        tool_results.append({"error": error_msg})
-                        continue
+                        # Collect and update state in original order
+                        for tc in tool_calls:
+                            future = futures_map.get(tc.id)
+                            if future is None:
+                                # Handle parsing error or missing future
+                                tool_results.append(self._execute_single_tool_call(tc))
+                            else:
+                                try:
+                                    # Wait for parallel execution to finish
+                                    result: ToolExecutionResult = future.result()
 
-                    # Execute tool
-                    result: ToolExecutionResult = self.tool_executor(function_name, function_args)
+                                    # Process result (update metrics & conversation) in main thread
+                                    if tc.function.name not in self.tool_metrics:
+                                        self.tool_metrics[tc.function.name] = ToolMetrics(tool_name=tc.function.name)
+                                    self.tool_metrics[tc.function.name].record_execution(result)
 
-                    # Record metrics for this tool
-                    if function_name not in self.tool_metrics:
-                        self.tool_metrics[function_name] = ToolMetrics(tool_name=function_name)
-                    self.tool_metrics[function_name].record_execution(result)
+                                    result_dict = result.to_legacy_dict()
+                                    self.conversation.add_message(
+                                        role="tool",
+                                        content=json.dumps(result_dict),
+                                        tool_call_id=tc.id,
+                                        name=tc.function.name,
+                                    )
+                                    tool_results.append(result_dict)
+                                except Exception as e:
+                                    # Fallback to single executor for error reporting if thread failed
+                                    tool_results.append(self._execute_single_tool_call(tc))
+                else:
+                    # Sequential execution (standard path)
+                    for tool_call in tool_calls:
+                        tool_results.append(self._execute_single_tool_call(tool_call))
 
-                    # Convert ToolExecutionResult to dict for conversation
-                    # Use legacy format for backward compatibility with OpenAI API
-                    result_dict = result.to_legacy_dict()
-
-                    # Add tool response to conversation
-                    self.conversation.add_message(
-                        role="tool",
-                        content=json.dumps(result_dict),
-                        tool_call_id=tool_call.id,
-                        name=function_name,
-                    )
-
-                    tool_results.append(result_dict)
-
-            # Get final response from model
             messages = self.conversation.get_messages()
 
             # Reasoning models (o1, o3 series) have different parameter requirements
