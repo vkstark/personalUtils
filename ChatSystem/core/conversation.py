@@ -41,6 +41,10 @@ class Message(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now)
     tokens: Optional[int] = None
 
+    # Caches for serialization to avoid redundant O(N) work in O(N^2) save loops
+    _cached_dump: Optional[Dict[str, Any]] = PrivateAttr(default=None)
+    _cached_openai_format: Optional[Dict[str, Any]] = PrivateAttr(default=None)
+
     def get_token_count(self, encoding: Any) -> int:
         """
         Calculates and caches the token count for this message.
@@ -78,11 +82,15 @@ class Message(BaseModel):
 
         This method selectively includes fields that are not None to create a
         clean dictionary for the API request.
+        Uses a internal cache to avoid redundant re-serialization.
 
         Returns:
             Dict[str, Any]: A dictionary representing the message in the format
             expected by the OpenAI API.
         """
+        if self._cached_openai_format is not None:
+            return self._cached_openai_format
+
         msg = {"role": self.role}
 
         if self.content is not None:
@@ -97,7 +105,67 @@ class Message(BaseModel):
         if self.tool_call_id is not None:
             msg["tool_call_id"] = self.tool_call_id
 
+        self._cached_openai_format = msg
         return msg
+
+    def __setattr__(self, name, value):
+        """
+        Invalidate caches when any attribute is changed.
+        """
+        super().__setattr__(name, value)
+        # Clear caches if any attribute is modified
+        if not name.startswith("_"):
+            self._cached_dump = None
+            self._cached_openai_format = None
+
+    def to_openai_format(self) -> Dict[str, Any]:
+        """
+        Converts the Message object to a dictionary format compatible with the
+        OpenAI API.
+
+        This method selectively includes fields that are not None to create a
+        clean dictionary for the API request.
+        Uses a internal cache to avoid redundant re-serialization.
+
+        Returns:
+            Dict[str, Any]: A dictionary representing the message in the format
+            expected by the OpenAI API.
+        """
+        if self._cached_openai_format is not None:
+            # Return a copy to prevent callers from modifying the cached dict
+            return self._cached_openai_format.copy()
+
+        msg = {"role": self.role}
+
+        if self.content is not None:
+            msg["content"] = self.content
+
+        if self.name is not None:
+            msg["name"] = self.name
+
+        if self.tool_calls is not None:
+            msg["tool_calls"] = self.tool_calls
+
+        if self.tool_call_id is not None:
+            msg["tool_call_id"] = self.tool_call_id
+
+        self._cached_openai_format = msg
+        return msg.copy()
+
+    def model_dump(self, **kwargs) -> Dict[str, Any]:
+        """
+        Overrides model_dump to provide caching for the default call.
+        """
+        # Only use cache if no specific dump arguments are provided
+        if not kwargs and self._cached_dump is not None:
+            return self._cached_dump.copy()
+
+        dump = super().model_dump(**kwargs)
+
+        if not kwargs:
+            self._cached_dump = dump
+
+        return dump.copy() if not kwargs else dump
 
 
 class ConversationManager:
