@@ -12,3 +12,7 @@
 ## 2026-04-14 - [Parallel tool execution in ChatEngine]
 **Learning:** Found that sequential tool execution was a major latency bottleneck during multi-tool calls. While the LLM can request parallel tools, the engine was executing them one-by-one.
 **Action:** Implemented a `ThreadPoolExecutor` in `ChatEngine._handle_tool_calls` to execute I/O bound tools concurrently. Refactored the logic into `_execute_single_tool_call` to avoid code duplication and ensure thread-safe, ordered state updates (metrics and conversation history) by processing results sequentially in the main thread. Measured a ~3x speedup for 3 parallel 1s tasks.
+
+## 2026-04-14 - [Safe Serialization Caching in Mutable Models]
+**Learning:** Implementing serialization caching (e.g., for `model_dump`) in mutable models requires two critical safeguards: cache invalidation and defensive copying. Without invalidation (via `__setattr__` hooks), the cache becomes stale when attributes change. Without defensive copying (`.copy()`), callers can inadvertently modify the internal cache, leading to data corruption across the application.
+**Action:** Overrode `__setattr__` to clear caches on any public attribute change and used `.copy()` when returning cached dictionaries from `model_dump` and `to_openai_format`.
