@@ -41,6 +41,40 @@ class Message(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now)
     tokens: Optional[int] = None
 
+    _cached_dump: Optional[Dict[str, Any]] = PrivateAttr(default=None)
+    _cached_openai_format: Optional[Dict[str, Any]] = PrivateAttr(default=None)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        super().__setattr__(name, value)
+        # Invalidate caches if a public attribute is modified
+        if name[0] != "_" and name != "tokens":
+            # Using __dict__ directly to avoid triggering __setattr__ again
+            # and to safely check if keys exist before clearing them
+            d = self.__dict__
+            if "tokens" in d and d["tokens"] is not None:
+                d["tokens"] = None
+            if "_cached_dump" in d and d["_cached_dump"] is not None:
+                d["_cached_dump"] = None
+            if "_cached_openai_format" in d and d["_cached_openai_format"] is not None:
+                d["_cached_openai_format"] = None
+
+    def model_dump(self, **kwargs) -> Dict[str, Any]:
+        """
+        Overridden model_dump to provide caching for the default case.
+        """
+        # Use getattr to avoid issues with PrivateAttr during initialization
+        cached = getattr(self, "_cached_dump", None)
+        if not kwargs and cached is not None:
+            return cached.copy()
+
+        result = super().model_dump(**kwargs)
+
+        if not kwargs:
+            # Use object.__setattr__ to avoid triggering __setattr__ logic
+            object.__setattr__(self, "_cached_dump", result.copy())
+
+        return result
+
     def get_token_count(self, encoding: Any) -> int:
         """
         Calculates and caches the token count for this message.
@@ -83,6 +117,11 @@ class Message(BaseModel):
             Dict[str, Any]: A dictionary representing the message in the format
             expected by the OpenAI API.
         """
+        # Use getattr to avoid issues with PrivateAttr during initialization
+        cached = getattr(self, "_cached_openai_format", None)
+        if cached is not None:
+            return cached.copy()
+
         msg = {"role": self.role}
 
         if self.content is not None:
@@ -97,6 +136,8 @@ class Message(BaseModel):
         if self.tool_call_id is not None:
             msg["tool_call_id"] = self.tool_call_id
 
+        # Use object.__setattr__ to avoid triggering __setattr__ logic
+        object.__setattr__(self, "_cached_openai_format", msg.copy())
         return msg
 
 
