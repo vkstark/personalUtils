@@ -12,3 +12,7 @@
 ## 2026-04-14 - [Parallel tool execution in ChatEngine]
 **Learning:** Found that sequential tool execution was a major latency bottleneck during multi-tool calls. While the LLM can request parallel tools, the engine was executing them one-by-one.
 **Action:** Implemented a `ThreadPoolExecutor` in `ChatEngine._handle_tool_calls` to execute I/O bound tools concurrently. Refactored the logic into `_execute_single_tool_call` to avoid code duplication and ensure thread-safe, ordered state updates (metrics and conversation history) by processing results sequentially in the main thread. Measured a ~3x speedup for 3 parallel 1s tasks.
+
+## 2026-04-17 - [Caching Pydantic serialization with __setattr__ overhead awareness]
+**Learning:** Overriding `__setattr__` in Pydantic v2 models to clear caches can introduce a 2-5x slowdown in field assignment if not careful. Additionally, using `object.__setattr__` for `PrivateAttr` fields bypasses Pydantic's descriptor-based storage in `__pydantic_private__`, making the cache inaccessible via standard attribute access.
+**Action:** Optimized `Message.__setattr__` by using early returns for private attributes and directly modifying `self.__pydantic_private__` for cache invalidation. This achieved an ~80% reduction in `model_dump()` time while keeping `__setattr__` overhead minimal. Always return `dict()` copies from cached serialization methods to prevent mutable reference leaks.
