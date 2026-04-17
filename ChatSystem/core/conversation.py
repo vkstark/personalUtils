@@ -41,6 +41,26 @@ class Message(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now)
     tokens: Optional[int] = None
 
+    # Performance: Cache serialization results to avoid redundant Pydantic model_dump overhead
+    _cached_dump: Optional[Dict[str, Any]] = PrivateAttr(default=None)
+    _cached_openai_format: Optional[Dict[str, Any]] = PrivateAttr(default=None)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Override to clear serialization caches when public fields change."""
+        super().__setattr__(name, value)
+        # Only clear cache if a public field is changed (doesn't start with _)
+        if name[0] != '_':
+            try:
+                # Direct access to __pydantic_private__ is much faster than super().__setattr__
+                # for PrivateAttrs and avoids recursion if not careful.
+                if self._cached_dump is not None:
+                    self.__pydantic_private__["_cached_dump"] = None
+                if self._cached_openai_format is not None:
+                    self.__pydantic_private__["_cached_openai_format"] = None
+            except (AttributeError, KeyError):
+                # Handle case where PrivateAttrs are not yet initialized during __init__
+                pass
+
     def get_token_count(self, encoding: Any) -> int:
         """
         Calculates and caches the token count for this message.
@@ -83,6 +103,10 @@ class Message(BaseModel):
             Dict[str, Any]: A dictionary representing the message in the format
             expected by the OpenAI API.
         """
+        # Return cached version if available
+        if self._cached_openai_format is not None:
+            return dict(self._cached_openai_format)
+
         msg = {"role": self.role}
 
         if self.content is not None:
@@ -97,7 +121,27 @@ class Message(BaseModel):
         if self.tool_call_id is not None:
             msg["tool_call_id"] = self.tool_call_id
 
-        return msg
+        # Cache the result and return a copy to prevent external mutation of cache
+        self._cached_openai_format = msg
+        return dict(msg)
+
+    def model_dump(self, **kwargs) -> Dict[str, Any]:
+        """
+        Overridden model_dump to provide caching for the default case.
+        """
+        # Only cache if using default parameters
+        if not kwargs and self._cached_dump is not None:
+            return dict(self._cached_dump)
+
+        # Call original model_dump
+        res = super().model_dump(**kwargs)
+
+        # Cache if default parameters were used
+        if not kwargs:
+            self._cached_dump = res
+            return dict(res)
+
+        return res
 
 
 class ConversationManager:
