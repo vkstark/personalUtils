@@ -147,6 +147,7 @@ class ConversationManager:
         self._total_tokens = 0
         self._batch_save_count = 0
         self._needs_save = False
+        self._cached_openai_messages: Optional[List[Dict[str, Any]]] = None
 
         # Set up history file
         if history_file:
@@ -236,6 +237,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         self.messages.append(message)
         self._total_tokens += message.get_token_count(self.encoding)
+        self._cached_openai_messages = None
 
         # Auto-save if enabled
         if self.auto_save:
@@ -254,12 +256,23 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         Returns:
             List[Dict[str, Any]]: A list of message dictionaries.
         """
+        if include_system and self._cached_openai_messages is not None:
+            # Return a shallow copy of the list to prevent external modification
+            # of the cached list itself, while sharing the immutable-style
+            # message dictionaries.
+            return list(self._cached_openai_messages)
+
         messages = self.messages
 
         if not include_system:
             messages = [m for m in messages if m.role != "system"]
 
-        return [msg.to_openai_format() for msg in messages]
+        res = [msg.to_openai_format() for msg in messages]
+
+        if include_system:
+            self._cached_openai_messages = res
+
+        return list(res)
 
     def count_tokens(self, messages: Optional[List[Message]] = None) -> int:
         """
@@ -341,6 +354,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         if num_to_remove > 0:
             self.messages = system_messages + other_messages[num_to_remove:]
+            self._cached_openai_messages = None
 
         self._total_tokens = current_tokens
 
@@ -363,6 +377,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             self._add_default_system_prompt()
 
         self._total_tokens = self.count_tokens(self.messages)
+        self._cached_openai_messages = None
 
         if self.auto_save:
             self._save_history()
@@ -422,6 +437,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
                 self.messages.append(message)
 
             self._total_tokens = self.count_tokens(self.messages)
+            self._cached_openai_messages = None
 
         except Exception as e:
             print(f"Warning: Could not load history: {e}")
@@ -545,6 +561,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         # Replace messages with summary + kept messages
         self.messages = system_messages + [summary_message] + messages_to_keep
         self._total_tokens = self.count_tokens(self.messages)
+        self._cached_openai_messages = None
 
         if self.auto_save:
             self._save_history()

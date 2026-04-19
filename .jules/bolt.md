@@ -12,3 +12,11 @@
 ## 2026-04-14 - [Parallel tool execution in ChatEngine]
 **Learning:** Found that sequential tool execution was a major latency bottleneck during multi-tool calls. While the LLM can request parallel tools, the engine was executing them one-by-one.
 **Action:** Implemented a `ThreadPoolExecutor` in `ChatEngine._handle_tool_calls` to execute I/O bound tools concurrently. Refactored the logic into `_execute_single_tool_call` to avoid code duplication and ensure thread-safe, ordered state updates (metrics and conversation history) by processing results sequentially in the main thread. Measured a ~3x speedup for 3 parallel 1s tasks.
+
+## 2026-04-19 - [High-level list caching for conversation messages]
+**Learning:** Found that  was a hidden bottleneck, as it re-serialized every message in the history on every turn. Attempting to cache at the  level using  actually introduced more overhead than it saved for small objects.
+**Action:** Implemented a high-level list cache () in . It caches the list of formatted dictionaries and returns a shallow copy (). This achieved a ~5x speedup for 2,000-message histories without the complexity of Pydantic method overrides.
+
+## 2026-04-19 - [High-level list caching for conversation messages]
+**Learning:** Found that `get_messages()` was a hidden bottleneck, as it re-serialized every message in the history on every turn. Attempting to cache at the `Message` level using `deepcopy()` actually introduced more overhead than it saved for small objects.
+**Action:** Implemented a high-level list cache (`_cached_openai_messages`) in `ConversationManager`. It caches the list of formatted dictionaries and returns a shallow copy (`list()`). This achieved a ~5x speedup for 2,000-message histories without the complexity of Pydantic method overrides.
