@@ -6,8 +6,8 @@ Loads from .env and provides validated settings
 
 import yaml
 from pathlib import Path
-from typing import Dict, Any, List
-from pydantic import Field, field_validator
+from typing import Dict, Any, List, Optional
+from pydantic import Field, field_validator, PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
@@ -60,6 +60,9 @@ class Settings(BaseSettings):
 
     # Config file path
     config_yaml_path: str = Field(default="config.yaml")
+
+    # Private cache for YAML config to avoid redundant disk I/O
+    _yaml_cache: Optional[Dict[str, Any]] = PrivateAttr(default=None)
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -115,20 +118,32 @@ class Settings(BaseSettings):
 
     def load_yaml_config(self) -> Dict[str, Any]:
         """
-        Loads additional configuration from a YAML file.
+        Loads additional configuration from a YAML file with internal caching.
 
         The path to the YAML file is specified by the `config_yaml_path`
         attribute. If the file does not exist, an empty dictionary is returned.
+        Results are cached in `_yaml_cache` to avoid redundant disk I/O.
 
         Returns:
             Dict[str, Any]: A dictionary containing the YAML configuration, or
             an empty dictionary if the file doesn't exist.
         """
+        # Return cached config if available
+        if self._yaml_cache is not None:
+            return self._yaml_cache
+
         yaml_path = Path(self.config_yaml_path)
+        config = {}
         if yaml_path.exists():
-            with open(yaml_path, 'r') as f:
-                return yaml.safe_load(f) or {}
-        return {}
+            try:
+                with open(yaml_path, 'r') as f:
+                    config = yaml.safe_load(f) or {}
+            except Exception:
+                # Fallback to empty dict on read/parse errors
+                config = {}
+
+        self._yaml_cache = config
+        return config
 
     def get_model_for_task(self, task_type: str = "general") -> str:
         """
