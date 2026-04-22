@@ -16,3 +16,7 @@
 ## 2026-04-16 - [Caching OpenAI formatted messages in ConversationManager]
 **Learning:** Identified that `ConversationManager.get_messages()` was an O(N) operation that re-serialized every message in the history on every turn. In large conversations (2000+ messages), this consumed ~1.3ms per call, which adds up in agentic loops or multi-turn reasoning.
 **Action:** Implemented a high-level list cache `_cached_openai_messages` in `ConversationManager`. Added `_invalidate_cache()` to all methods that modify the message history. Measured a ~150x speedup for `get_messages()` calls (from 1.3ms to 0.008ms).
+
+## 2026-04-22 - [Caching YAML configuration in Settings]
+**Learning:** Identified that `Settings.load_yaml_config()` performed a synchronous disk read and YAML parse on every call (~7.5ms). This method was used as a helper by multiple other getters (`get_model_for_task`, `get_enabled_tools`, `get_agent_config`), causing redundant I/O.
+**Action:** Implemented an instance-level cache `_yaml_cache` using Pydantic's `PrivateAttr`. This reduced subsequent call latency from ~7.5ms to ~0.014ms (a ~500x speedup).
