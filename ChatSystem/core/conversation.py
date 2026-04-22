@@ -198,6 +198,10 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         self.add_message(role="system", content=system_prompt)
 
+    def _invalidate_cache(self):
+        """Invalidates the cached OpenAI formatted messages."""
+        self._cached_openai_messages = None
+
     def add_message(
         self,
         role: Literal["system", "user", "assistant", "tool"],
@@ -237,7 +241,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         self.messages.append(message)
         self._total_tokens += message.get_token_count(self.encoding)
-        self._cached_openai_messages = None
+        self._invalidate_cache()
 
         # Auto-save if enabled
         if self.auto_save:
@@ -256,22 +260,19 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         Returns:
             List[Dict[str, Any]]: A list of message dictionaries.
         """
-        # If we have a cache and want all messages, use it
-        if include_system and self._cached_openai_messages is not None:
-            return list(self._cached_openai_messages)
-
-        messages = self.messages
-
-        if not include_system:
-            messages = [m for m in messages if m.role != "system"]
-
-        formatted_messages = [msg.to_openai_format() for msg in messages]
-
-        # Cache the results if we included all messages
+        # If including system prompt, use cached list if available
         if include_system:
-            self._cached_openai_messages = formatted_messages
+            if self._cached_openai_messages is None:
+                self._cached_openai_messages = [
+                    msg.to_openai_format() for msg in self.messages
+                ]
+            # Return a shallow copy of the list to prevent external modification
+            return self._cached_openai_messages[:]
 
-        return list(formatted_messages)
+        # If not including system prompt, we don't cache as it's a rare case
+        return [
+            msg.to_openai_format() for msg in self.messages if msg.role != "system"
+        ]
 
     def count_tokens(self, messages: Optional[List[Message]] = None) -> int:
         """
@@ -353,7 +354,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         if num_to_remove > 0:
             self.messages = system_messages + other_messages[num_to_remove:]
-            self._cached_openai_messages = None
+            self._invalidate_cache()
 
         self._total_tokens = current_tokens
 
@@ -376,7 +377,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             self._add_default_system_prompt()
 
         self._total_tokens = self.count_tokens(self.messages)
-        self._cached_openai_messages = None
+        self._invalidate_cache()
 
         if self.auto_save:
             self._save_history()
@@ -436,7 +437,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
                 self.messages.append(message)
 
             self._total_tokens = self.count_tokens(self.messages)
-            self._cached_openai_messages = None
+            self._invalidate_cache()
 
         except Exception as e:
             print(f"Warning: Could not load history: {e}")
@@ -560,7 +561,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         # Replace messages with summary + kept messages
         self.messages = system_messages + [summary_message] + messages_to_keep
         self._total_tokens = self.count_tokens(self.messages)
-        self._cached_openai_messages = None
+        self._invalidate_cache()
 
         if self.auto_save:
             self._save_history()
