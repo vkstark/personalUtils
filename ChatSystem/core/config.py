@@ -7,7 +7,7 @@ Loads from .env and provides validated settings
 import yaml
 from pathlib import Path
 from typing import Dict, Any, List
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
@@ -60,6 +60,8 @@ class Settings(BaseSettings):
 
     # Config file path
     config_yaml_path: str = Field(default="config.yaml")
+
+    _yaml_cache: Dict[str, Any] = PrivateAttr(default=None)
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -124,11 +126,18 @@ class Settings(BaseSettings):
             Dict[str, Any]: A dictionary containing the YAML configuration, or
             an empty dictionary if the file doesn't exist.
         """
+        if self._yaml_cache is not None:
+            return self._yaml_cache
+
         yaml_path = Path(self.config_yaml_path)
         if yaml_path.exists():
             with open(yaml_path, 'r') as f:
-                return yaml.safe_load(f) or {}
-        return {}
+                # Cache the parsed YAML content to avoid redundant disk I/O and parsing
+                self._yaml_cache = yaml.safe_load(f) or {}
+        else:
+            self._yaml_cache = {}
+
+        return self._yaml_cache
 
     def get_model_for_task(self, task_type: str = "general") -> str:
         """
