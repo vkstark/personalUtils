@@ -148,6 +148,7 @@ class ConversationManager:
         self._batch_save_count = 0
         self._needs_save = False
         self._cached_openai_messages: Optional[List[Dict[str, Any]]] = None
+        self._cached_dumped_messages: Optional[List[Dict[str, Any]]] = None
 
         # Set up history file
         if history_file:
@@ -199,8 +200,9 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         self.add_message(role="system", content=system_prompt)
 
     def _invalidate_cache(self):
-        """Invalidates the cached OpenAI formatted messages."""
+        """Invalidates the cached message caches."""
         self._cached_openai_messages = None
+        self._cached_dumped_messages = None
 
     def add_message(
         self,
@@ -241,7 +243,12 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         self.messages.append(message)
         self._total_tokens += message.get_token_count(self.encoding)
-        self._invalidate_cache()
+
+        # Incremental cache update instead of full invalidation
+        if self._cached_openai_messages is not None:
+            self._cached_openai_messages.append(message.to_openai_format())
+        if self._cached_dumped_messages is not None:
+            self._cached_dumped_messages.append(message.model_dump())
 
         # Auto-save if enabled
         if self.auto_save:
@@ -401,11 +408,15 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             # Create directory if it doesn't exist
             self.history_file.parent.mkdir(parents=True, exist_ok=True)
 
+            # Use cached dumped messages if available
+            if self._cached_dumped_messages is None:
+                self._cached_dumped_messages = [msg.model_dump() for msg in self.messages]
+
             # Convert messages to dict format
             history_data = {
                 "model": self.model,
                 "timestamp": datetime.now().isoformat(),
-                "messages": [msg.model_dump() for msg in self.messages],
+                "messages": self._cached_dumped_messages,
             }
 
             with open(self.history_file, "w", encoding="utf-8") as f:
