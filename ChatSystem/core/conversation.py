@@ -148,6 +148,7 @@ class ConversationManager:
         self._batch_save_count = 0
         self._needs_save = False
         self._cached_openai_messages: Optional[List[Dict[str, Any]]] = None
+        self._cached_dumped_messages: Optional[List[Dict[str, Any]]] = None
 
         # Set up history file
         if history_file:
@@ -199,8 +200,9 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         self.add_message(role="system", content=system_prompt)
 
     def _invalidate_cache(self):
-        """Invalidates the cached OpenAI formatted messages."""
+        """Invalidates all cached message formats."""
         self._cached_openai_messages = None
+        self._cached_dumped_messages = None
 
     def add_message(
         self,
@@ -241,7 +243,12 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         self.messages.append(message)
         self._total_tokens += message.get_token_count(self.encoding)
-        self._invalidate_cache()
+
+        # Incrementally update caches if they exist
+        if self._cached_openai_messages is not None:
+            self._cached_openai_messages.append(message.to_openai_format())
+        if self._cached_dumped_messages is not None:
+            self._cached_dumped_messages.append(message.model_dump())
 
         # Auto-save if enabled
         if self.auto_save:
@@ -358,6 +365,20 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         self._total_tokens = current_tokens
 
+    def _get_dumped_messages(self) -> List[Dict[str, Any]]:
+        """
+        Retrieves the list of messages in Pydantic's dumped format, using cache if available.
+
+        Returns:
+            List[Dict[str, Any]]: A list of message dictionaries (full model dump).
+        """
+        if self._cached_dumped_messages is None:
+            self._cached_dumped_messages = [
+                msg.model_dump() for msg in self.messages
+            ]
+        # Return a shallow copy of the list to prevent external modification
+        return self._cached_dumped_messages[:]
+
     def clear_history(self, keep_system: bool = True):
         """
         Clears the conversation history.
@@ -405,7 +426,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             history_data = {
                 "model": self.model,
                 "timestamp": datetime.now().isoformat(),
-                "messages": [msg.model_dump() for msg in self.messages],
+                "messages": self._get_dumped_messages(),
             }
 
             with open(self.history_file, "w", encoding="utf-8") as f:
@@ -460,7 +481,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         if format == "json":
             with open(filepath, "w", encoding="utf-8") as f:
                 json.dump(
-                    [msg.model_dump() for msg in self.messages],
+                    self._get_dumped_messages(),
                     f,
                     indent=2,
                     default=str,
