@@ -20,3 +20,7 @@
 ## 2026-04-18 - [Caching YAML configuration in Settings]
 **Learning:** `Settings.load_yaml_config()` was being called multiple times per turn (by `get_model_for_task`, `get_enabled_tools`, and `get_agent_config`), causing redundant disk I/O and YAML parsing. This added ~0.44ms of overhead to many core operations.
 **Action:** Implemented instance-level caching using `PrivateAttr`. This reduced latency to ~0.004ms per call (a ~100x improvement).
+
+## 2026-04-20 - [Incremental serialization caching in ConversationManager]
+**Learning:** Identified that every message turn in a conversation of size N incurred an O(N) serialization cost due to full history re-processing in both get_messages() and _save_history() (when auto_save is enabled). This led to quadratic O(N^2) total cost over the life of a conversation.
+**Action:** Implemented incremental caching for both OpenAI-formatted and Pydantic-dumped messages. Updated add_message() to append to these caches in O(1), and refactored save/export methods to reuse them. Measured a ~14x speedup for typical turn latency in a 2000-message history.
