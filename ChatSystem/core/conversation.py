@@ -148,6 +148,7 @@ class ConversationManager:
         self._batch_save_count = 0
         self._needs_save = False
         self._cached_openai_messages: Optional[List[Dict[str, Any]]] = None
+        self._cached_dumped_messages: Optional[List[Dict[str, Any]]] = None
 
         # Set up history file
         if history_file:
@@ -199,8 +200,9 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         self.add_message(role="system", content=system_prompt)
 
     def _invalidate_cache(self):
-        """Invalidates the cached OpenAI formatted messages."""
+        """Invalidates the cached message serializations."""
         self._cached_openai_messages = None
+        self._cached_dumped_messages = None
 
     def add_message(
         self,
@@ -241,7 +243,12 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         self.messages.append(message)
         self._total_tokens += message.get_token_count(self.encoding)
-        self._invalidate_cache()
+
+        # Incrementally update caches if they exist
+        if self._cached_openai_messages is not None:
+            self._cached_openai_messages.append(message.to_openai_format())
+        if self._cached_dumped_messages is not None:
+            self._cached_dumped_messages.append(message.model_dump())
 
         # Auto-save if enabled
         if self.auto_save:
@@ -260,18 +267,19 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         Returns:
             List[Dict[str, Any]]: A list of message dictionaries.
         """
-        # If including system prompt, use cached list if available
+        # Warm up the cache if needed
+        if self._cached_openai_messages is None:
+            self._cached_openai_messages = [
+                msg.to_openai_format() for msg in self.messages
+            ]
+
         if include_system:
-            if self._cached_openai_messages is None:
-                self._cached_openai_messages = [
-                    msg.to_openai_format() for msg in self.messages
-                ]
             # Return a shallow copy of the list to prevent external modification
             return self._cached_openai_messages[:]
 
-        # If not including system prompt, we don't cache as it's a rare case
+        # Filter from the cache for better performance
         return [
-            msg.to_openai_format() for msg in self.messages if msg.role != "system"
+            msg for msg in self._cached_openai_messages if msg["role"] != "system"
         ]
 
     def count_tokens(self, messages: Optional[List[Message]] = None) -> int:
@@ -402,10 +410,13 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             self.history_file.parent.mkdir(parents=True, exist_ok=True)
 
             # Convert messages to dict format
+            if self._cached_dumped_messages is None:
+                self._cached_dumped_messages = [msg.model_dump() for msg in self.messages]
+
             history_data = {
                 "model": self.model,
                 "timestamp": datetime.now().isoformat(),
-                "messages": [msg.model_dump() for msg in self.messages],
+                "messages": self._cached_dumped_messages,
             }
 
             with open(self.history_file, "w", encoding="utf-8") as f:
@@ -458,9 +469,12 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             ValueError: If an unsupported format is specified.
         """
         if format == "json":
+            if self._cached_dumped_messages is None:
+                self._cached_dumped_messages = [msg.model_dump() for msg in self.messages]
+
             with open(filepath, "w", encoding="utf-8") as f:
                 json.dump(
-                    [msg.model_dump() for msg in self.messages],
+                    self._cached_dumped_messages,
                     f,
                     indent=2,
                     default=str,
