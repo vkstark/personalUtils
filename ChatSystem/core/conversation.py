@@ -148,6 +148,7 @@ class ConversationManager:
         self._batch_save_count = 0
         self._needs_save = False
         self._cached_openai_messages: Optional[List[Dict[str, Any]]] = None
+        self._cached_dumped_messages: Optional[List[Dict[str, Any]]] = None
 
         # Set up history file
         if history_file:
@@ -199,8 +200,20 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         self.add_message(role="system", content=system_prompt)
 
     def _invalidate_cache(self):
-        """Invalidates the cached OpenAI formatted messages."""
+        """Invalidates the cached message representations."""
         self._cached_openai_messages = None
+        self._cached_dumped_messages = None
+
+    def _get_dumped_messages(self) -> List[Dict[str, Any]]:
+        """
+        Retrieves the list of messages in Pydantic-dumped JSON format.
+        Uses caching to avoid redundant serialization.
+        """
+        if self._cached_dumped_messages is None:
+            self._cached_dumped_messages = [
+                msg.model_dump(mode='json') for msg in self.messages
+            ]
+        return self._cached_dumped_messages
 
     def add_message(
         self,
@@ -241,7 +254,13 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         self.messages.append(message)
         self._total_tokens += message.get_token_count(self.encoding)
-        self._invalidate_cache()
+
+        # Incrementally update caches if they exist
+        if self._cached_openai_messages is not None:
+            self._cached_openai_messages.append(message.to_openai_format())
+
+        if self._cached_dumped_messages is not None:
+            self._cached_dumped_messages.append(message.model_dump(mode='json'))
 
         # Auto-save if enabled
         if self.auto_save:
@@ -260,18 +279,20 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         Returns:
             List[Dict[str, Any]]: A list of message dictionaries.
         """
-        # If including system prompt, use cached list if available
-        if include_system:
-            if self._cached_openai_messages is None:
-                self._cached_openai_messages = [
-                    msg.to_openai_format() for msg in self.messages
-                ]
-            # Return a shallow copy of the list to prevent external modification
-            return self._cached_openai_messages[:]
+        if self._cached_openai_messages is None:
+            self._cached_openai_messages = [
+                msg.to_openai_format() for msg in self.messages
+            ]
 
-        # If not including system prompt, we don't cache as it's a rare case
+        # Use the cache even for include_system=False to avoid O(N) re-serialization
+        if include_system:
+            # Return copies of dicts to prevent external modification of the cache
+            return [msg.copy() for msg in self._cached_openai_messages]
+
+        # Filter the cache - still faster than re-serializing everything
         return [
-            msg.to_openai_format() for msg in self.messages if msg.role != "system"
+            msg.copy() for msg in self._cached_openai_messages
+            if msg["role"] != "system"
         ]
 
     def count_tokens(self, messages: Optional[List[Message]] = None) -> int:
@@ -405,11 +426,12 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             history_data = {
                 "model": self.model,
                 "timestamp": datetime.now().isoformat(),
-                "messages": [msg.model_dump() for msg in self.messages],
+                "messages": self._get_dumped_messages(),
             }
 
             with open(self.history_file, "w", encoding="utf-8") as f:
-                json.dump(history_data, f, indent=2, default=str)
+                # Removed indent=2 for performance and reduced file size
+                json.dump(history_data, f)
 
         except Exception as e:
             print(f"Warning: Could not save history: {e}")
@@ -460,10 +482,8 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         if format == "json":
             with open(filepath, "w", encoding="utf-8") as f:
                 json.dump(
-                    [msg.model_dump() for msg in self.messages],
+                    self._get_dumped_messages(),
                     f,
-                    indent=2,
-                    default=str,
                 )
         elif format == "text":
             with open(filepath, "w", encoding="utf-8") as f:
