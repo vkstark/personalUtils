@@ -148,6 +148,7 @@ class ConversationManager:
         self._batch_save_count = 0
         self._needs_save = False
         self._cached_openai_messages: Optional[List[Dict[str, Any]]] = None
+        self._cached_dumped_messages: Optional[List[Dict[str, Any]]] = None
 
         # Set up history file
         if history_file:
@@ -199,8 +200,9 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         self.add_message(role="system", content=system_prompt)
 
     def _invalidate_cache(self):
-        """Invalidates the cached OpenAI formatted messages."""
+        """Invalidates the cached message representations."""
         self._cached_openai_messages = None
+        self._cached_dumped_messages = None
 
     def add_message(
         self,
@@ -241,7 +243,13 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         self.messages.append(message)
         self._total_tokens += message.get_token_count(self.encoding)
-        self._invalidate_cache()
+
+        # Update caches incrementally if they exist
+        if self._cached_openai_messages is not None:
+            self._cached_openai_messages.append(message.to_openai_format())
+
+        if self._cached_dumped_messages is not None:
+            self._cached_dumped_messages.append(message.model_dump(mode='json'))
 
         # Auto-save if enabled
         if self.auto_save:
@@ -269,7 +277,11 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             # Return a shallow copy of the list to prevent external modification
             return self._cached_openai_messages[:]
 
-        # If not including system prompt, we don't cache as it's a rare case
+        # If not including system prompt, we can filter the existing cache if available
+        # or just generate the filtered list on the fly
+        if self._cached_openai_messages is not None:
+            return [msg for msg in self._cached_openai_messages if msg["role"] != "system"]
+
         return [
             msg.to_openai_format() for msg in self.messages if msg.role != "system"
         ]
@@ -401,15 +413,22 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             # Create directory if it doesn't exist
             self.history_file.parent.mkdir(parents=True, exist_ok=True)
 
+            # Rebuild dumped messages cache if it was invalidated
+            if self._cached_dumped_messages is None:
+                self._cached_dumped_messages = [
+                    msg.model_dump(mode='json') for msg in self.messages
+                ]
+
             # Convert messages to dict format
             history_data = {
                 "model": self.model,
                 "timestamp": datetime.now().isoformat(),
-                "messages": [msg.model_dump() for msg in self.messages],
+                "messages": self._cached_dumped_messages,
             }
 
             with open(self.history_file, "w", encoding="utf-8") as f:
-                json.dump(history_data, f, indent=2, default=str)
+                # Optimized save: no indentation and using mode='json' dumps
+                json.dump(history_data, f)
 
         except Exception as e:
             print(f"Warning: Could not save history: {e}")
@@ -458,13 +477,14 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             ValueError: If an unsupported format is specified.
         """
         if format == "json":
+            # Rebuild dumped messages cache if it was invalidated
+            if self._cached_dumped_messages is None:
+                self._cached_dumped_messages = [
+                    msg.model_dump(mode='json') for msg in self.messages
+                ]
+
             with open(filepath, "w", encoding="utf-8") as f:
-                json.dump(
-                    [msg.model_dump() for msg in self.messages],
-                    f,
-                    indent=2,
-                    default=str,
-                )
+                json.dump(self._cached_dumped_messages, f)
         elif format == "text":
             with open(filepath, "w", encoding="utf-8") as f:
                 for msg in self.messages:
