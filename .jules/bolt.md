@@ -20,3 +20,7 @@
 ## 2026-04-18 - [Caching YAML configuration in Settings]
 **Learning:** `Settings.load_yaml_config()` was being called multiple times per turn (by `get_model_for_task`, `get_enabled_tools`, and `get_agent_config`), causing redundant disk I/O and YAML parsing. This added ~0.44ms of overhead to many core operations.
 **Action:** Implemented instance-level caching using `PrivateAttr`. This reduced latency to ~0.004ms per call (a ~100x improvement).
+
+## 2026-05-21 - [Optimizing message serialization and caching]
+**Learning:** json.dump with indent=2 is significantly slower (~5x) than compact serialization for large history files. Using Pydantic v2's model_dump(mode='json') pre-serializes objects more efficiently than using default=str in json.dump, especially when combined with incremental caching.
+**Action:** Implemented dual-format incremental caching and removed indentation from history files. Reduced get_messages() latency by ~11x and _save_history() by ~1.6x for 1,000 messages.
