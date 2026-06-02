@@ -244,11 +244,12 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         self.messages.append(message)
         self._total_tokens += message.get_token_count(self.encoding)
 
-        # Incrementally update caches if they exist to avoid O(N) re-serialization
+        # Update caches incrementally if they are already populated
         if self._cached_openai_messages is not None:
             self._cached_openai_messages.append(message.to_openai_format())
 
         if self._cached_dumped_messages is not None:
+            # use model_dump(mode='json') to pre-serialize complex types (e.g. datetime)
             self._cached_dumped_messages.append(message.model_dump(mode='json'))
 
         # Auto-save if enabled
@@ -268,18 +269,20 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         Returns:
             List[Dict[str, Any]]: A list of message dictionaries.
         """
-        # Populate cache if it's missing
+        # Ensure base cache is populated
         if self._cached_openai_messages is None:
             self._cached_openai_messages = [
                 msg.to_openai_format() for msg in self.messages
             ]
 
-        # If including system prompt, return a shallow copy of the cached list
+        # If including system prompt, return a shallow copy of the full cached list
         if include_system:
             return self._cached_openai_messages[:]
 
-        # If not including system prompt, filter the existing cache (O(N) vs re-serializing)
-        return [msg for msg in self._cached_openai_messages if msg.get("role") != "system"]
+        # If not including system prompt, filter the cached list (faster than re-serializing)
+        return [
+            msg for msg in self._cached_openai_messages if msg["role"] != "system"
+        ]
 
     def count_tokens(self, messages: Optional[List[Message]] = None) -> int:
         """
@@ -408,10 +411,11 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             # Create directory if it doesn't exist
             self.history_file.parent.mkdir(parents=True, exist_ok=True)
 
-            # Use cached dumped messages to avoid O(N) serialization cost
+            # Ensure dumped messages cache is populated
             if self._cached_dumped_messages is None:
-                self._cached_dumped_messages = [msg.model_dump(mode='json') for msg in self.messages]
-
+                self._cached_dumped_messages = [
+                    msg.model_dump(mode='json') for msg in self.messages
+                ]
             history_data = {
                 "model": self.model,
                 "timestamp": datetime.now().isoformat(),
@@ -419,7 +423,8 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             }
 
             with open(self.history_file, "w", encoding="utf-8") as f:
-                # Remove indent and use separators for faster I/O and smaller files
+                # Use compact serialization (no indent, separators=(',', ':')) for speed and size
+                # We already used mode='json' in model_dump, so default=str is no longer needed
                 json.dump(history_data, f, separators=(',', ':'))
 
         except Exception as e:
@@ -448,7 +453,13 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
                 self.messages.append(message)
 
             self._total_tokens = self.count_tokens(self.messages)
-            self._invalidate_cache()
+            # Rebuild caches after loading history to ensure they are available
+            self._cached_openai_messages = [
+                msg.to_openai_format() for msg in self.messages
+            ]
+            self._cached_dumped_messages = [
+                msg.model_dump(mode='json') for msg in self.messages
+            ]
 
         except Exception as e:
             print(f"Warning: Could not load history: {e}")
@@ -470,10 +481,15 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         """
         if format == "json":
             if self._cached_dumped_messages is None:
-                self._cached_dumped_messages = [msg.model_dump(mode='json') for msg in self.messages]
-
+                self._cached_dumped_messages = [
+                    msg.model_dump(mode='json') for msg in self.messages
+                ]
             with open(filepath, "w", encoding="utf-8") as f:
-                json.dump(self._cached_dumped_messages, f)
+                json.dump(
+                    self._cached_dumped_messages,
+                    f,
+                    indent=2,
+                )
         elif format == "text":
             with open(filepath, "w", encoding="utf-8") as f:
                 for msg in self.messages:
