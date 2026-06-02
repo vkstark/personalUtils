@@ -200,7 +200,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         self.add_message(role="system", content=system_prompt)
 
     def _invalidate_cache(self):
-        """Invalidates the cached OpenAI formatted messages."""
+        """Invalidates the cached conversation history representations."""
         self._cached_openai_messages = None
         self._cached_dumped_messages = None
 
@@ -281,7 +281,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         # If not including system prompt, filter the cached list (faster than re-serializing)
         return [
-            msg for msg in self._cached_openai_messages if msg["role"] != "system"
+            msg for msg in self._cached_openai_messages if msg.get("role") != "system"
         ]
 
     def count_tokens(self, messages: Optional[List[Message]] = None) -> int:
@@ -416,8 +416,6 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
                 self._cached_dumped_messages = [
                     msg.model_dump(mode='json') for msg in self.messages
                 ]
-
-            # Convert messages to dict format
             history_data = {
                 "model": self.model,
                 "timestamp": datetime.now().isoformat(),
