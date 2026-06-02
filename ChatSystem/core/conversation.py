@@ -281,7 +281,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         # If not including system prompt, filter the cached list (faster than re-serializing)
         return [
-            msg for msg in self._cached_openai_messages if msg["role"] != "system"
+            msg for msg in self._cached_openai_messages if msg.get("role") != "system"
         ]
 
     def count_tokens(self, messages: Optional[List[Message]] = None) -> int:
