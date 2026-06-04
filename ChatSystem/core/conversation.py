@@ -148,13 +148,21 @@ class ConversationManager:
         self._batch_save_count = 0
         self._needs_save = False
         self._cached_openai_messages: Optional[List[Dict[str, Any]]] = None
+        self._cached_openai_messages_no_system: Optional[List[Dict[str, Any]]] = None
         self._cached_dumped_messages: Optional[List[Dict[str, Any]]] = None
+        self._cached_summary: Optional[Dict[str, Any]] = None
 
         # Set up history file
         if history_file:
             self.history_file = Path(history_file)
         else:
             self.history_file = Path.home() / ".chatsystem_history.json"
+
+        # Ensure history directory exists
+        try:
+            self.history_file.parent.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            print(f"Warning: Could not create history directory: {e}")
 
         # Initialize tokenizer
         try:
@@ -202,7 +210,9 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
     def _invalidate_cache(self):
         """Invalidates the cached conversation history representations."""
         self._cached_openai_messages = None
+        self._cached_openai_messages_no_system = None
         self._cached_dumped_messages = None
+        self._cached_summary = None
 
     def add_message(
         self,
@@ -246,11 +256,18 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         # Update caches incrementally if they are already populated
         if self._cached_openai_messages is not None:
-            self._cached_openai_messages.append(message.to_openai_format())
+            openai_msg = message.to_openai_format()
+            self._cached_openai_messages.append(openai_msg)
+            # Update no-system cache if it's already populated and new message isn't system
+            if self._cached_openai_messages_no_system is not None and role != "system":
+                self._cached_openai_messages_no_system.append(openai_msg)
 
         if self._cached_dumped_messages is not None:
             # use model_dump(mode='json') to pre-serialize complex types (e.g. datetime)
             self._cached_dumped_messages.append(message.model_dump(mode='json'))
+
+        # Invalidate summary cache
+        self._cached_summary = None
 
         # Auto-save if enabled
         if self.auto_save:
@@ -279,10 +296,14 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         if include_system:
             return self._cached_openai_messages[:]
 
-        # If not including system prompt, filter the cached list (faster than re-serializing)
-        return [
-            msg for msg in self._cached_openai_messages if msg.get("role") != "system"
-        ]
+        # Ensure no-system cache is populated
+        if self._cached_openai_messages_no_system is None:
+            self._cached_openai_messages_no_system = [
+                msg for msg in self._cached_openai_messages if msg.get("role") != "system"
+            ]
+
+        # Return a shallow copy of the cached no-system list
+        return self._cached_openai_messages_no_system[:]
 
     def count_tokens(self, messages: Optional[List[Message]] = None) -> int:
         """
@@ -397,8 +418,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         Saves the current conversation history to a JSON file.
 
         The history is saved to the path specified by `self.history_file`.
-        This method handles the creation of the parent directory if it does not
-        exist. Any exceptions during the save process are caught and printed as
+        Any exceptions during the save process are caught and printed as
         warnings.
         """
         if self._batch_save_count > 0:
@@ -408,9 +428,6 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         self._needs_save = False
 
         try:
-            # Create directory if it doesn't exist
-            self.history_file.parent.mkdir(parents=True, exist_ok=True)
-
             # Ensure dumped messages cache is populated
             if self._cached_dumped_messages is None:
                 self._cached_dumped_messages = [
@@ -509,17 +526,21 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         Returns:
             Dict[str, Any]: A dictionary containing the summary statistics.
         """
+        if self._cached_summary is not None:
+            return self._cached_summary.copy()
+
         role_counts = {}
         for msg in self.messages:
             role_counts[msg.role] = role_counts.get(msg.role, 0) + 1
 
-        return {
+        self._cached_summary = {
             "total_messages": len(self.messages),
             "messages_by_role": role_counts,
             "context_usage": self.get_context_window_usage(),
             "started_at": self.messages[0].timestamp if self.messages else None,
             "last_message_at": self.messages[-1].timestamp if self.messages else None,
         }
+        return self._cached_summary
 
     @contextlib.contextmanager
     def batch_saves(self):
