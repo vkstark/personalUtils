@@ -17,12 +17,17 @@ from ..tools.tool_result import ToolExecutionResult, ToolStatus
 
 
 class ChatEngine:
+    # Reasoning models (o1, o3 series) have different parameter requirements
+    REASONING_MODELS = ("o1-preview", "o1-mini", "o3", "o3-mini")
+
     """
     The main engine for handling chat interactions with OpenAI's GPT models.
 
     This class orchestrates the entire chat process, including managing the
     conversation history, making API calls to OpenAI, handling streaming
     responses, and coordinating function calling with registered tools.
+
+
 
     Attributes:
         settings (Settings): The application settings object.
@@ -184,18 +189,20 @@ class ChatEngine:
         Yields:
             Iterator[str]: An iterator that yields each chunk of the response.
         """
-        full_response = ""
+        full_response_parts = []
         had_tool_calls = False
 
         for chunk, is_tool_response in self._chat_stream(model, max_tokens, temperature):
-            full_response += chunk
+            full_response_parts.append(chunk)
             had_tool_calls = is_tool_response
             yield chunk
 
         # Add assistant response only if tools weren't used
         # Tool handling adds its own messages to the conversation
-        if not had_tool_calls and full_response:
-            self.conversation.add_message(role="assistant", content=full_response)
+        if not had_tool_calls and full_response_parts:
+            full_response = "".join(full_response_parts)
+            if full_response:
+                self.conversation.add_message(role="assistant", content=full_response)
 
     def _chat_completion(
         self, model: str, max_tokens: int, temperature: float
@@ -218,9 +225,8 @@ class ChatEngine:
 
         messages = self.conversation.get_messages()
 
-        # Reasoning models (o1, o3 series) have different parameter requirements
-        reasoning_models = ["o1-preview", "o1-mini", "o3", "o3-mini"]
-        is_reasoning_model = any(model.startswith(rm) for rm in reasoning_models)
+        # Reasoning models have different parameter requirements
+        is_reasoning_model = model.startswith(self.REASONING_MODELS)
 
         # Prepare API call parameters
         params = {
@@ -293,9 +299,8 @@ class ChatEngine:
 
         messages = self.conversation.get_messages()
 
-        # Reasoning models (o1, o3 series) have different parameter requirements
-        reasoning_models = ["o1-preview", "o1-mini", "o3", "o3-mini"]
-        is_reasoning_model = any(model.startswith(rm) for rm in reasoning_models)
+        # Reasoning models have different parameter requirements
+        is_reasoning_model = model.startswith(self.REASONING_MODELS)
 
         # Prepare API call parameters
         params = {
@@ -325,7 +330,6 @@ class ChatEngine:
         stream = self.client.chat.completions.create(**params)
 
         # Collect streamed response
-        full_content = ""
         tool_calls = []
 
         for chunk in stream:
@@ -338,9 +342,7 @@ class ChatEngine:
 
             # Handle content
             if delta.content:
-                content_chunk = delta.content
-                full_content += content_chunk
-                yield content_chunk, False
+                yield delta.content, False
 
             # Handle tool calls
             if delta.tool_calls:
@@ -350,14 +352,14 @@ class ChatEngine:
                         tool_calls.append({
                             "id": tc.id,
                             "type": "function",
-                            "function": {"name": "", "arguments": ""}
+                            "function": {"name": "", "arguments": []}
                         })
 
                     if tc.function.name:
                         tool_calls[tc.index]["function"]["name"] = tc.function.name
 
                     if tc.function.arguments:
-                        tool_calls[tc.index]["function"]["arguments"] += tc.function.arguments
+                        tool_calls[tc.index]["function"]["arguments"].append(tc.function.arguments)
 
         # Handle tool calls if present
         if tool_calls:
@@ -370,7 +372,7 @@ class ChatEngine:
                         type=tc["type"],
                         function={
                             "name": tc["function"]["name"],
-                            "arguments": tc["function"]["arguments"]
+                            "arguments": "".join(tc["function"]["arguments"])
                         }
                     )
                 )
@@ -516,9 +518,8 @@ class ChatEngine:
 
             messages = self.conversation.get_messages()
 
-            # Reasoning models (o1, o3 series) have different parameter requirements
-            reasoning_models = ["o1-preview", "o1-mini", "o3", "o3-mini"]
-            is_reasoning_model = any(model.startswith(rm) for rm in reasoning_models)
+            # Reasoning models have different parameter requirements
+            is_reasoning_model = model.startswith(self.REASONING_MODELS)
 
             # Prepare params for tool call response
             tool_params = {
