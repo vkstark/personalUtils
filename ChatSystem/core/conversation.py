@@ -9,7 +9,7 @@ import contextlib
 from typing import List, Dict, Any, Optional, Literal, TYPE_CHECKING
 from datetime import datetime
 from pathlib import Path
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr, TypeAdapter
 
 if TYPE_CHECKING:
     from ChatSystem.core.chat_engine import ChatEngine
@@ -452,31 +452,37 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         Loads the conversation history from the JSON file.
 
         This method reads the file specified by `self.history_file`, parses
-        the JSON content, and populates the `self.messages` list. Any
-        exceptions during the loading process are caught and printed as
-        warnings.
+        the JSON content, and populates the `self.messages` list using optimized
+        bulk validation. Any exceptions during the loading process are caught
+        and printed as warnings.
         """
         try:
             with open(self.history_file, "r", encoding="utf-8") as f:
                 history_data = json.load(f)
 
-            # Load messages
-            for msg_data in history_data.get("messages", []):
-                # Convert timestamp string back to datetime
-                if "timestamp" in msg_data and isinstance(msg_data["timestamp"], str):
-                    msg_data["timestamp"] = datetime.fromisoformat(msg_data["timestamp"])
+            raw_messages = history_data.get("messages", [])
+            if not raw_messages:
+                return
 
-                message = Message(**msg_data)
-                self.messages.append(message)
+            # Bolt: Optimize history loading using bulk validation
+            # TypeAdapter.validate_python is significantly faster than manual loop with Message(**data)
+            adapter = TypeAdapter(List[Message])
+            new_messages = adapter.validate_python(raw_messages)
 
+            # Bolt: Use extend to preserve existing additive behavior
+            self.messages.extend(new_messages)
+
+            # Bolt: Update total tokens using centralized method for accuracy
             self._total_tokens = self.count_tokens(self.messages)
-            # Rebuild caches after loading history to ensure they are available
-            self._cached_openai_messages = [
-                msg.to_openai_format() for msg in self.messages
-            ]
-            self._cached_dumped_messages = [
-                msg.model_dump(mode='json') for msg in self.messages
-            ]
+
+            # Bolt: Rebuild caches (O(N) to match original behavior, but with optimized dumped messages)
+            self._cached_openai_messages = [msg.to_openai_format() for msg in self.messages]
+
+            # Bolt: Optimize dumped cache by reusing raw loaded data for the new part
+            # This avoids redundant model_dump calls on the entire history
+            existing_count = len(self.messages) - len(new_messages)
+            existing_dumped = [msg.model_dump(mode='json') for msg in self.messages[:existing_count]]
+            self._cached_dumped_messages = existing_dumped + raw_messages
 
         except Exception as e:
             print(f"Warning: Could not load history: {e}")

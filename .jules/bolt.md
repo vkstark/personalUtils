@@ -31,3 +31,7 @@
 ## 2026-06-05 - [Optimize get_messages(include_system=False) and get_summary caching]
 **Learning:** `get_messages(include_system=False)` was an O(N) operation due to filtering, taking ~0.26ms for 4k messages. `get_summary()` was also O(N) taking ~0.74ms. Moving `mkdir` out of `_save_history` also reduces filesystem overhead in the hot path.
 **Action:** Implemented incremental caching for the no-system message list and lazy caching for conversation summary. Moved history directory creation to `__init__`. Measured ~18x speedup for `get_messages(include_system=False)` and ~460x speedup for `get_summary()`.
+
+## 2026-06-10 - [Optimize history loading with bulk validation]
+**Learning:** Pydantic V2's `TypeAdapter.validate_python()` is significantly faster than manual loops for bulk initialization. Reusing raw JSON data for caches when loading can also bypass expensive `model_dump()` calls.
+**Action:** Implemented bulk validation in `ConversationManager._load_history` and optimized cache rebuilding.
