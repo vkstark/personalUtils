@@ -6,6 +6,7 @@ Conversation Manager - Handle message history and context
 import json
 import tiktoken
 import contextlib
+from collections import defaultdict
 from typing import List, Dict, Any, Optional, Literal, TYPE_CHECKING
 from datetime import datetime
 from pathlib import Path
@@ -144,9 +145,9 @@ class ConversationManager:
         self.max_tokens = max_tokens
         self.messages: List[Message] = []
         self.auto_save = auto_save
-        self._total_tokens = 0
         self._batch_save_count = 0
         self._needs_save = False
+        self._reset_state()
         self._cached_openai_messages: Optional[List[Dict[str, Any]]] = None
         self._cached_openai_messages_no_system: Optional[List[Dict[str, Any]]] = None
         self._cached_dumped_messages: Optional[List[Dict[str, Any]]] = None
@@ -207,6 +208,11 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         self.add_message(role="system", content=system_prompt)
 
+    def _reset_state(self):
+        """Resets the internal tracking state for tokens and roles."""
+        self._total_tokens = 0
+        self._role_counts = defaultdict(int)
+
     def _invalidate_cache(self):
         """Invalidates the cached conversation history representations."""
         self._cached_openai_messages = None
@@ -253,6 +259,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         self.messages.append(message)
         self._total_tokens += message.get_token_count(self.encoding)
+        self._role_counts[role] += 1
 
         # Update caches incrementally if they are already populated
         if self._cached_openai_messages is not None:
@@ -371,8 +378,14 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             return
 
         # Always keep system message
-        system_messages = [m for m in self.messages if m.role == "system"]
-        other_messages = [m for m in self.messages if m.role != "system"]
+        # Bolt: Single-pass optimization for categorizing messages
+        system_messages = []
+        other_messages = []
+        for m in self.messages:
+            if m.role == "system":
+                system_messages.append(m)
+            else:
+                other_messages.append(m)
 
         # Track tokens as we remove messages
         current_tokens = self._total_tokens
@@ -385,6 +398,10 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         if num_to_remove > 0:
             self.messages = system_messages + other_messages[num_to_remove:]
+            # Bolt: Update role counts and invalidate cache
+            self._reset_state()
+            for m in self.messages:
+                self._role_counts[m.role] += 1
             self._invalidate_cache()
 
         self._total_tokens = current_tokens
@@ -407,7 +424,12 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             self.messages = []
             self._add_default_system_prompt()
 
-        self._total_tokens = self.count_tokens(self.messages)
+        # Bolt: Update total tokens and role counts
+        self._reset_state()
+        for m in self.messages:
+            self._total_tokens += m.get_token_count(self.encoding)
+            self._role_counts[m.role] += 1
+
         self._invalidate_cache()
 
         if self.auto_save:
@@ -472,11 +494,17 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             # Bolt: Use extend to preserve existing additive behavior
             self.messages.extend(new_messages)
 
-            # Bolt: Update total tokens using centralized method for accuracy
-            self._total_tokens = self.count_tokens(self.messages)
+            # Bolt: Update total tokens and role counts in a single pass over the entire history
+            # This is more efficient than calling count_tokens and separate role counting loops
+            self._reset_state()
+            openai_msgs = []
+            for msg in self.messages:
+                self._total_tokens += msg.get_token_count(self.encoding)
+                self._role_counts[msg.role] += 1
+                openai_msgs.append(msg.to_openai_format())
 
             # Bolt: Rebuild caches (O(N) to match original behavior, but with optimized dumped messages)
-            self._cached_openai_messages = [msg.to_openai_format() for msg in self.messages]
+            self._cached_openai_messages = openai_msgs
 
             # Bolt: Optimize dumped cache by reusing raw loaded data for the new part
             # This avoids redundant model_dump calls on the entire history
@@ -535,13 +563,11 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         if self._cached_summary is not None:
             return self._cached_summary.copy()
 
-        role_counts = {}
-        for msg in self.messages:
-            role_counts[msg.role] = role_counts.get(msg.role, 0) + 1
-
+        # Bolt: get_summary is now O(1) via incremental role tracking
+        # Convert defaultdict to dict for a cleaner summary
         self._cached_summary = {
             "total_messages": len(self.messages),
-            "messages_by_role": role_counts,
+            "messages_by_role": dict(self._role_counts),
             "context_usage": self.get_context_window_usage(),
             "started_at": self.messages[0].timestamp if self.messages else None,
             "last_message_at": self.messages[-1].timestamp if self.messages else None,
@@ -585,8 +611,14 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             return "No messages to summarize"
 
         # Keep system messages and recent messages
-        system_messages = [m for m in self.messages if m.role == "system"]
-        other_messages = [m for m in self.messages if m.role != "system"]
+        # Bolt: Single-pass optimization for categorizing messages
+        system_messages = []
+        other_messages = []
+        for m in self.messages:
+            if m.role == "system":
+                system_messages.append(m)
+            else:
+                other_messages.append(m)
 
         if len(other_messages) < 5:
             # Too few messages to summarize meaningfully
@@ -612,7 +644,12 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         # Replace messages with summary + kept messages
         self.messages = system_messages + [summary_message] + messages_to_keep
-        self._total_tokens = self.count_tokens(self.messages)
+        # Bolt: Update total tokens and role counts in a single pass
+        self._reset_state()
+        for m in self.messages:
+            self._total_tokens += m.get_token_count(self.encoding)
+            self._role_counts[m.role] += 1
+
         self._invalidate_cache()
 
         if self.auto_save:
