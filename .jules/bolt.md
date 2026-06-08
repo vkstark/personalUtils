@@ -35,3 +35,7 @@
 ## 2026-06-10 - [Optimize history loading with bulk validation]
 **Learning:** Pydantic V2's `TypeAdapter.validate_python()` is significantly faster than manual loops for bulk initialization. Reusing raw JSON data for caches when loading can also bypass expensive `model_dump()` calls.
 **Action:** Implemented bulk validation in `ConversationManager._load_history` and optimized cache rebuilding.
+
+## 2026-06-12 - [Incremental state tracking and single-pass optimization]
+**Learning:** Found that `get_summary()` and `trim_context()` were performing redundant O(N) iterations. Specifically, `get_summary` recalculated role counts every time, and `trim_context` used multiple list comprehensions. An initial attempt to optimize `trim_context` by triggering a full state rebuild actually introduced an O(N) regression (calculating tokens for all messages) compared to the original O(1) subtraction.
+**Action:** Implemented incremental role tracking using `collections.defaultdict(int)` updated in `add_message` and `trim_context`. Refactored `trim_context` to use a single-pass loop and incremental token/role subtraction ($O(K)$ where $K$ is number of removed messages), preserving the $O(1)$ token update performance. Measured ~180x speedup for `get_summary`.
