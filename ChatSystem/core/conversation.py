@@ -6,6 +6,7 @@ Conversation Manager - Handle message history and context
 import json
 import tiktoken
 import contextlib
+import collections
 from typing import List, Dict, Any, Optional, Literal, TYPE_CHECKING
 from datetime import datetime
 from pathlib import Path
@@ -145,6 +146,7 @@ class ConversationManager:
         self.messages: List[Message] = []
         self.auto_save = auto_save
         self._total_tokens = 0
+        self._role_counts = collections.defaultdict(int)
         self._batch_save_count = 0
         self._needs_save = False
         self._cached_openai_messages: Optional[List[Dict[str, Any]]] = None
@@ -180,6 +182,22 @@ class ConversationManager:
         # Load previous history if available
         if self.auto_save and self.history_file.exists():
             self._load_history()
+
+    def _reset_state(self):
+        """
+        Resets and recalculates the internal state from the current message list.
+
+        This includes total tokens, role counts, and cache invalidation.
+        This is an O(N) operation and should be used after bulk message modifications.
+        """
+        self._total_tokens = 0
+        self._role_counts = collections.defaultdict(int)
+
+        for msg in self.messages:
+            self._total_tokens += msg.get_token_count(self.encoding)
+            self._role_counts[msg.role] += 1
+
+        self._invalidate_cache()
 
     def _add_default_system_prompt(self):
         """
@@ -253,6 +271,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         self.messages.append(message)
         self._total_tokens += message.get_token_count(self.encoding)
+        self._role_counts[role] += 1
 
         # Update caches incrementally if they are already populated
         if self._cached_openai_messages is not None:
@@ -380,7 +399,9 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         # Identify how many messages to remove
         num_to_remove = 0
         while current_tokens > target_tokens and num_to_remove < len(other_messages) - 1:
-            current_tokens -= other_messages[num_to_remove].get_token_count(self.encoding)
+            msg_to_remove = other_messages[num_to_remove]
+            current_tokens -= msg_to_remove.get_token_count(self.encoding)
+            self._role_counts[msg_to_remove.role] -= 1
             num_to_remove += 1
 
         if num_to_remove > 0:
@@ -407,8 +428,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             self.messages = []
             self._add_default_system_prompt()
 
-        self._total_tokens = self.count_tokens(self.messages)
-        self._invalidate_cache()
+        self._reset_state()
 
         if self.auto_save:
             self._save_history()
@@ -472,11 +492,15 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             # Bolt: Use extend to preserve existing additive behavior
             self.messages.extend(new_messages)
 
-            # Bolt: Update total tokens using centralized method for accuracy
-            self._total_tokens = self.count_tokens(self.messages)
+            # Bolt: Rebuild state and caches in a single optimized pass
+            self._total_tokens = 0
+            self._role_counts = collections.defaultdict(int)
+            self._cached_openai_messages = []
 
-            # Bolt: Rebuild caches (O(N) to match original behavior, but with optimized dumped messages)
-            self._cached_openai_messages = [msg.to_openai_format() for msg in self.messages]
+            for msg in self.messages:
+                self._total_tokens += msg.get_token_count(self.encoding)
+                self._role_counts[msg.role] += 1
+                self._cached_openai_messages.append(msg.to_openai_format())
 
             # Bolt: Optimize dumped cache by reusing raw loaded data for the new part
             # This avoids redundant model_dump calls on the entire history
@@ -535,13 +559,9 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         if self._cached_summary is not None:
             return self._cached_summary.copy()
 
-        role_counts = {}
-        for msg in self.messages:
-            role_counts[msg.role] = role_counts.get(msg.role, 0) + 1
-
         self._cached_summary = {
             "total_messages": len(self.messages),
-            "messages_by_role": role_counts,
+            "messages_by_role": dict(self._role_counts),
             "context_usage": self.get_context_window_usage(),
             "started_at": self.messages[0].timestamp if self.messages else None,
             "last_message_at": self.messages[-1].timestamp if self.messages else None,
@@ -612,8 +632,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
         # Replace messages with summary + kept messages
         self.messages = system_messages + [summary_message] + messages_to_keep
-        self._total_tokens = self.count_tokens(self.messages)
-        self._invalidate_cache()
+        self._reset_state()
 
         if self.auto_save:
             self._save_history()
