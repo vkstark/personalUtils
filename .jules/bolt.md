@@ -39,3 +39,7 @@
 ## 2026-06-15 - [Optimize get_summary with incremental role tracking]
 **Learning:** `get_summary` was an O(N) operation due to manual role counting, which added overhead to every stats retrieval call.
 **Action:** Implemented `_role_counts` using `collections.defaultdict(int)` to track roles incrementally in `add_message` and `trim_context`. Optimized `_load_history` to rebuild all state in a single pass. Measured ~22x speedup for 4,000 messages.
+
+## 2026-06-20 - [Optimize ToolMetrics with caching and deque]
+**Learning:** `ToolMetrics.to_dict()` was performing redundant string formatting and health status calculations on every call. In monitoring loops, this adds up. Implementing a lazy cache and using `collections.deque` for the fixed-size error history improves efficiency. Crucially, learned that when caching mutable structures like dictionaries, returning a direct reference allows external mutation of the internal state.
+**Action:** Implemented a lazy cache for `to_dict()` that is invalidated in `record_execution`. Always return a shallow copy (`.copy()`) of cached dictionaries and ensure fixed-size histories are converted to serializable types (like `list`) before caching/returning. Measured ~45x speedup for `to_dict()` (from 0.014ms to 0.0003ms).
