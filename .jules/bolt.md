@@ -39,3 +39,7 @@
 ## 2026-06-15 - [Optimize get_summary with incremental role tracking]
 **Learning:** `get_summary` was an O(N) operation due to manual role counting, which added overhead to every stats retrieval call.
 **Action:** Implemented `_role_counts` using `collections.defaultdict(int)` to track roles incrementally in `add_message` and `trim_context`. Optimized `_load_history` to rebuild all state in a single pass. Measured ~22x speedup for 4,000 messages.
+
+## 2026-06-20 - [Optimize ToolMetrics with lazy caching and deque]
+**Learning:** `ToolMetrics.to_dict()` was being called frequently in `ChatEngine.get_stats()`, causing redundant calculations and string formatting. Also, manual list slicing for `error_history` was O(N) for each update.
+**Action:** Implemented lazy caching for `to_dict()` and replaced the list-based `error_history` with `collections.deque(maxlen=10)`. Measured a ~32x speedup for `get_stats()` (from ~0.16ms to ~0.005ms). Always return a shallow copy (`.copy()`) when caching dictionaries to prevent external mutation of the internal state.
