@@ -9,6 +9,7 @@ This module provides comprehensive metrics tracking for each tool, enabling:
 4. Health dashboards and alerting
 """
 
+import collections
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 from dataclasses import dataclass, field
@@ -56,7 +57,12 @@ class ToolMetrics:
     last_error_time: Optional[datetime] = None
 
     # Error history (last 10 errors)
-    error_history: List[str] = field(default_factory=list)
+    error_history: collections.deque = field(
+        default_factory=lambda: collections.deque(maxlen=10)
+    )
+
+    # Lazy cache for to_dict()
+    _cached_dict: Optional[Dict[str, Any]] = field(default=None, init=False)
 
     def record_execution(self, result: "ToolExecutionResult") -> None:
         """
@@ -77,11 +83,9 @@ class ToolMetrics:
             self.last_error = result.error_message or "Unknown error"
             self.last_error_time = result.timestamp
 
-            # Add to error history (keep last 10)
+            # Add to error history (deque automatically handles maxlen)
             error_entry = f"{result.timestamp.strftime('%Y-%m-%d %H:%M:%S')}: {result.error_message or 'Unknown error'}"
             self.error_history.append(error_entry)
-            if len(self.error_history) > 10:
-                self.error_history = self.error_history[-10:]
 
         elif result.status == ToolStatus.TIMEOUT:
             self.timeout_count += 1
@@ -99,6 +103,9 @@ class ToolMetrics:
 
         if self.max_duration is None or result.duration > self.max_duration:
             self.max_duration = result.duration
+
+        # Invalidate cache
+        self._cached_dict = None
 
     @property
     def total_calls(self) -> int:
@@ -172,11 +179,15 @@ class ToolMetrics:
     def to_dict(self) -> Dict[str, Any]:
         """
         Convert metrics to a dictionary for serialization.
+        Uses lazy caching to avoid redundant calculations.
 
         Returns:
             Dict containing all metrics in a JSON-serializable format
         """
-        return {
+        if self._cached_dict is not None:
+            return self._cached_dict.copy()
+
+        self._cached_dict = {
             "tool_name": self.tool_name,
             "total_calls": self.total_calls,
             "success_count": self.success_count,
@@ -193,7 +204,9 @@ class ToolMetrics:
             "last_error": self.last_error,
             "last_error_time": self.last_error_time.isoformat() if self.last_error_time else None,
             "health_status": self.get_health_status(),
+            "error_history": list(self.error_history),
         }
+        return self._cached_dict.copy()
 
     def __repr__(self) -> str:
         """String representation for debugging"""
