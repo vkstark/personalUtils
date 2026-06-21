@@ -88,6 +88,17 @@ class AgentManager:
         }
     }
 
+    # Each agent exposes one "handle a user turn" entry point. The CLI routes
+    # raw input (anything that isn't a /command) through the active agent's
+    # method via dispatch(), so e.g. the task_executor actually runs its
+    # plan→reason→act loop instead of being bypassed by a direct chat call.
+    _PRIMARY_METHOD = {
+        AgentType.TASK_EXECUTOR: "execute_task",
+        AgentType.TRANSCRIPT_ANALYZER: "analyze",
+        AgentType.TRILLIONAIRE_FUTURIST: "respond",
+        AgentType.FRAMEWORK_TEACHER: "teach",
+    }
+
     def __init__(self, settings: Optional[Settings] = None):
         """
         Initializes the AgentManager.
@@ -204,6 +215,29 @@ class AgentManager:
             agent is active.
         """
         return self.current_agent
+
+    def dispatch(self, user_input: str) -> str:
+        """
+        Route a user turn to the current agent's primary method.
+
+        Looks up the active agent's entry point (`execute_task`/`analyze`/
+        `respond`/`teach`) via `_PRIMARY_METHOD` and calls it with the raw user
+        input, returning the agent's full response string.
+
+        Args:
+            user_input (str): The raw user message (not a slash command).
+
+        Returns:
+            str: The active agent's complete response.
+
+        Raises:
+            RuntimeError: If no agent is currently active.
+        """
+        if self.current_agent is None or self.current_agent_type is None:
+            raise RuntimeError("No active agent to handle the request")
+
+        method_name = self._PRIMARY_METHOD[self.current_agent_type]
+        return getattr(self.current_agent, method_name)(user_input)
 
     def list_agents(self) -> Dict[str, Any]:
         """

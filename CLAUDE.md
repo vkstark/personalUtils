@@ -133,7 +133,11 @@ of truth (used for fuzzy `/agent <name>` matching). Four agents — `task_execut
 `trillionaire_futurist`, `framework_teacher` — each defined by a long `SYSTEM_PERSONA` injected into the
 conversation on creation. All agents **share one `ChatEngine`/history**; isolation between them is only
 the persona text, so **swapping the engine requires re-adding the persona** (the CLI creates a fresh
-`ConversationManager` + `ChatEngine` per switch to prevent persona bleed).
+`ConversationManager` + `ChatEngine` per switch to prevent persona bleed). The CLI routes each
+non-command user turn through `AgentManager.dispatch()`, which calls the active agent's primary method
+(`_PRIMARY_METHOD`: `execute_task`/`analyze`/`respond`/`teach`) — it does **not** call `chat_engine.chat()`
+directly, so `/agent` actually runs that agent's logic (e.g. the executor's multi-step loop). These
+methods return a full string, so CLI output is non-streaming (rendered as Markdown).
 
 `task_executor` is the only multi-step agent: `executor.py` runs a planner→reason→act loop. `planner.py`
 makes one LLM call to produce a `TaskPlan` of `TaskStep`s (falls back to regex parsing if the JSON is

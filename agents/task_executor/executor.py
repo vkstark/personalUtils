@@ -5,7 +5,8 @@ AgentExecutor - Execute complex multi-step tasks
 Version 1.2: Planner-backed execution with reasoning traces
 """
 
-from typing import Optional
+import json
+from typing import Optional, List
 from ChatSystem.core.chat_engine import ChatEngine
 from ChatSystem.core.config import Settings
 from .planner import TaskPlanner, TaskPlan, TaskStep
@@ -84,6 +85,20 @@ When executing tasks:
                       for tool in chat_engine.tools] if chat_engine.tools else []
         persona = self.SYSTEM_PERSONA.format(tools=", ".join(tool_names))
         self.chat_engine.conversation.add_message("system", persona)
+
+    @property
+    def chat_engine(self) -> ChatEngine:
+        return self._chat_engine
+
+    @chat_engine.setter
+    def chat_engine(self, engine: ChatEngine) -> None:
+        # The planner holds its own engine reference; keep it in sync so that
+        # AgentManager swapping a cached executor's engine (on /agent switch)
+        # doesn't leave the planner generating plans against a stale engine.
+        self._chat_engine = engine
+        planner = getattr(self, "planner", None)
+        if planner is not None:
+            planner.chat_engine = engine
 
     def execute_task(self, user_request: str, use_planning: Optional[bool] = None) -> str:
         """
@@ -264,6 +279,12 @@ When executing tasks:
         """
         Execute a single step in the plan.
 
+        The chat engine runs any tool calls internally, so a tool failure is not
+        visible from its returned text. We therefore inspect the ``tool``-role
+        messages the engine appended during this turn and mark the step
+        ``failed`` (not ``done``) when a tool actually ran and errored. Without
+        this, a step is marked complete even though its tool blew up.
+
         Args:
             plan: The TaskPlan containing this step
             step: The TaskStep to execute
@@ -278,47 +299,49 @@ When executing tasks:
         result_lines = [f"▶️  Step {step.step_number}: {step.description}"]
 
         try:
-            # If step needs a tool, execute it
-            if step.tool_needed:
-                # Execute tool via chat engine (let it handle tool calling)
-                tool_request = f"Execute step {step.step_number}: {step.description}"
+            # Tool steps get an explicit "execute step N" framing; plain steps
+            # use the description directly. Either way the engine may call tools.
+            prompt = (
+                f"Execute step {step.step_number}: {step.description}"
+                if step.tool_needed
+                else step.description
+            )
 
-                response_parts = []
-                for chunk in self.chat_engine.chat(tool_request, model=self.model):
-                    response_parts.append(chunk)
+            # Snapshot existing messages by identity so we can find the tool
+            # messages added by THIS turn even if auto-summarize reorders the
+            # list (current-turn messages survive as the same objects).
+            convo = self.chat_engine.conversation
+            prior_ids = {id(m) for m in convo.messages}
 
-                result = "".join(response_parts)
+            response_parts = []
+            for chunk in self.chat_engine.chat(prompt, model=self.model):
+                response_parts.append(chunk)
+            result = "".join(response_parts)
 
-                # Update step with result
+            new_tool_messages = [
+                m for m in convo.messages
+                if m.role == "tool" and id(m) not in prior_ids
+            ]
+            tool_error = self._detect_tool_failure(new_tool_messages)
+
+            if tool_error:
                 self.planner.update_step_status(
-                    plan,
-                    step.step_number,
-                    "done",
-                    result=result
+                    plan, step.step_number, "failed", error_message=tool_error
                 )
-
-                result_lines.append(f"   ✓ {result[:200]}{'...' if len(result) > 200 else ''}")
-                self.reasoner.add_observation(f"Step {step.step_number} completed")
-                self.reasoner.add_tool_output(step.tool_needed or "chat", result)
-
+                result_lines.append(f"   ✗ Tool failed: {tool_error[:200]}")
+                self.reasoner.add_observation(
+                    f"Step {step.step_number} tool failed: {tool_error}"
+                )
             else:
-                # No tool needed, just use LLM
-                response_parts = []
-                for chunk in self.chat_engine.chat(step.description, model=self.model):
-                    response_parts.append(chunk)
-
-                result = "".join(response_parts)
-
-                # Update step with result
                 self.planner.update_step_status(
-                    plan,
-                    step.step_number,
-                    "done",
-                    result=result
+                    plan, step.step_number, "done", result=result
                 )
-
-                result_lines.append(f"   ✓ {result[:200]}{'...' if len(result) > 200 else ''}")
+                result_lines.append(
+                    f"   ✓ {result[:200]}{'...' if len(result) > 200 else ''}"
+                )
                 self.reasoner.add_observation(f"Step {step.step_number} completed")
+                if step.tool_needed:
+                    self.reasoner.add_tool_output(step.tool_needed, result)
 
         except Exception as e:
             error_msg = str(e)
@@ -333,6 +356,46 @@ When executing tasks:
             self.reasoner.add_observation(f"Step {step.step_number} failed: {error_msg}")
 
         return "\n".join(result_lines)
+
+    @staticmethod
+    def _detect_tool_failure(tool_messages: List) -> Optional[str]:
+        """
+        Return the first tool error among ``tool``-role messages, else None.
+
+        Tool results are persisted as JSON (``ToolExecutionResult.to_legacy_dict``
+        or a bare ``{"error": ...}`` envelope). A genuine failure is
+        ``success`` is False or an ``error`` key with no success flag.
+        ``manual_required`` is deliberately NOT a failure — it is a
+        deferred-action signal the caller is meant to act on (see CLAUDE.md), so
+        it is skipped.
+
+        This is fail-closed: if any tool invoked during the turn errored, the
+        step is treated as failed even if another tool in the same turn
+        succeeded. A step-execution engine should not report success when a tool
+        it called blew up. (The chat engine makes a single follow-up call and
+        does not retry tools, so a "fail then recover" sequence within one turn
+        does not arise today.)
+
+        Args:
+            tool_messages: Conversation ``Message`` objects with ``role == 'tool'``.
+
+        Returns:
+            The error string of the first failed tool message, or None.
+        """
+        for msg in tool_messages:
+            if not msg.content:
+                continue
+            try:
+                data = json.loads(msg.content)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+            if not isinstance(data, dict):
+                continue
+            if data.get("requires_manual_action"):
+                continue  # manual_required is a deferred action, not a failure
+            if data.get("success") is False or ("error" in data and "success" not in data):
+                return str(data.get("error", "tool execution failed"))
+        return None
 
     def get_reasoning_trace(self, include_metadata: bool = False) -> str:
         """

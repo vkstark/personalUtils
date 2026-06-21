@@ -95,5 +95,41 @@ class TestAgentLifecycle:
         assert manager.get_current_agent() is not None
 
 
+class TestDispatch:
+    """dispatch() routes a user turn to the active agent's primary method."""
+
+    def test_dispatch_calls_primary_method_of_current_agent(self, manager):
+        seen = {}
+
+        class _FakeFuturist:
+            def respond(self, text):
+                seen["arg"] = text
+                return "future answer"
+
+        manager.current_agent = _FakeFuturist()
+        manager.current_agent_type = AgentType.TRILLIONAIRE_FUTURIST
+
+        out = manager.dispatch("what is next")
+        assert out == "future answer"
+        assert seen["arg"] == "what is next"
+
+    def test_primary_method_map_covers_all_agent_types(self):
+        for agent_type in AgentType:
+            assert agent_type in AgentManager._PRIMARY_METHOD
+
+    def test_primary_method_exists_on_each_real_agent(self, manager):
+        # Guard against a typo in _PRIMARY_METHOD: each named method must exist.
+        for agent_type, method_name in AgentManager._PRIMARY_METHOD.items():
+            agent = manager.get_agent(agent_type, chat_engine=_StubEngine())
+            assert callable(getattr(agent, method_name, None)), (
+                f"{agent_type} has no callable {method_name}"
+            )
+
+    def test_dispatch_without_active_agent_raises(self):
+        mgr = AgentManager(settings=Settings(openai_api_key="test-key"))
+        with pytest.raises(RuntimeError):
+            mgr.dispatch("hello")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
