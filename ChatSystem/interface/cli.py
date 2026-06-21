@@ -479,18 +479,24 @@ Type your message or try these commands:
                         break
                     continue
 
-                # Display thinking indicator
+                # Route the turn through the active agent's primary method
+                # (e.g. the task_executor runs its full plan→reason→act loop).
+                # Agent methods return a complete response string, so we show a
+                # spinner while it works, then render the Markdown result.
                 self.console.print()
+                agent_info = self.agent_manager.get_agent_info(
+                    self.agent_manager.current_agent_type
+                )
+                self.console.print(
+                    f"[bold cyan]🤖 {agent_info.get('name', 'Assistant')}:[/bold cyan]"
+                )
 
-                # Stream response
-                self.console.print("[bold cyan]🤖 Assistant:[/bold cyan]")
+                with self.console.status("[cyan]Working...", spinner="dots"):
+                    response = self.agent_manager.dispatch(user_input)
 
-                response_parts = []
-                for chunk in self.chat_engine.chat(user_input):
-                    self.console.print(chunk, end="")
-                    response_parts.append(chunk)
-
-                self.console.print()  # New line after response
+                self.console.print(
+                    Markdown(response or "", code_theme=self.cli_config["theme"])
+                )
 
                 # Optional per-response context footer (cli.show_token_usage)
                 if self.cli_config.get("show_token_usage"):

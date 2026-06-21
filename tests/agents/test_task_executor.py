@@ -6,9 +6,11 @@ Consolidated into hermetic pytest form. LLM interactions use a fake chat engine
 that yields canned responses, so nothing here touches the OpenAI API.
 """
 
+import json
+
 import pytest
 
-from ChatSystem.core.conversation import ConversationManager
+from ChatSystem.core.conversation import ConversationManager, Message
 from ChatSystem.tools.tool_result import ToolExecutionResult, ToolStatus
 from agents.task_executor.planner import TaskPlanner, TaskPlan, TaskStep
 from agents.task_executor.reasoner import Reasoner
@@ -27,6 +29,47 @@ class _FakeEngine:
     def chat(self, prompt, **kwargs):
         self.prompts.append(prompt)
         yield self._responses.pop(0) if self._responses else "ok"
+
+
+class _ToolTurnEngine:
+    """
+    Fake engine whose step-execution chat() appends a tool-role message with a
+    configurable outcome, simulating the engine running a tool internally. The
+    first chat() call returns the plan JSON; subsequent calls are step turns.
+    """
+
+    def __init__(self, plan_json, tool_payload, preseed_payload=None):
+        self.conversation = ConversationManager(model="gpt-4o", auto_save=False)
+        self.tools = [{"function": {"name": "CodeWhisper"}}]
+        self._plan_json = plan_json
+        self._tool_payload = tool_payload
+        self._planned = False
+        self.prompts = []
+        self.step_turns = 0  # count of step-execution chat() calls (post-plan)
+        if preseed_payload is not None:
+            # A tool message from an EARLIER turn, present before this step runs.
+            self.conversation.add_message(
+                role="tool",
+                content=json.dumps(preseed_payload),
+                tool_call_id="old_call",
+                name="CodeWhisper",
+            )
+
+    def chat(self, prompt, **kwargs):
+        self.prompts.append(prompt)
+        if not self._planned:
+            self._planned = True
+            yield self._plan_json
+            return
+        # Simulate the engine executing a tool during this turn.
+        self.step_turns += 1
+        self.conversation.add_message(
+            role="tool",
+            content=json.dumps(self._tool_payload),
+            tool_call_id="call_1",
+            name="CodeWhisper",
+        )
+        yield "Tool turn complete."
 
 
 class TestTaskPlanModels:
@@ -240,6 +283,17 @@ class TestAgentExecutorRouting:
         result = ex.execute_task("say hi", use_planning=False)
         assert "the answer" in result
 
+    def test_swapping_chat_engine_syncs_planner_engine(self):
+        # AgentManager swaps a cached executor's engine on /agent switch; the
+        # planner must follow so it doesn't plan against a stale engine.
+        e1 = _FakeEngine()
+        ex = AgentExecutor(chat_engine=e1)
+        assert ex.planner.chat_engine is e1
+        e2 = _FakeEngine()
+        ex.chat_engine = e2
+        assert ex.chat_engine is e2
+        assert ex.planner.chat_engine is e2
+
     def test_execute_task_multi_step_builds_and_runs_plan(self):
         plan_json = (
             '{"steps": [{"step_number": 1, "description": "Step one", '
@@ -249,6 +303,111 @@ class TestAgentExecutorRouting:
         result = ex.execute_task("anything", use_planning=True)
         assert "Task Plan" in result
         assert "completed" in result.lower()
+
+
+class TestStepToolOutcome:
+    """Step status must reflect the actual tool execution outcome, not just
+    that the LLM produced text."""
+
+    PLAN_JSON = (
+        '{"steps": [{"step_number": 1, "description": "Run analysis", '
+        '"tool_needed": "CodeWhisper", "dependencies": []}]}'
+    )
+
+    def _run(self, tool_payload):
+        engine = _ToolTurnEngine(self.PLAN_JSON, tool_payload)
+        ex = AgentExecutor(chat_engine=engine)
+        ex.execute_task("analyze all the files", use_planning=True)
+        return ex.planner.plans[-1]
+
+    def test_tool_error_marks_step_failed(self):
+        plan = self._run({"success": False, "error": "boom: tool exploded"})
+        assert plan.steps[0].status == "failed"
+        assert "boom" in (plan.steps[0].error_message or "")
+        assert plan.status == "failed"
+
+    def test_tool_success_marks_step_done(self):
+        plan = self._run({"success": True, "result": "analysis complete"})
+        assert plan.steps[0].status == "done"
+        assert plan.status == "done"
+
+    def test_bare_error_envelope_marks_step_failed(self):
+        # The engine writes {"error": ...} (no success key) on arg-parse/exec errors.
+        plan = self._run({"error": "Error parsing tool arguments"})
+        assert plan.steps[0].status == "failed"
+
+    def test_manual_required_is_not_a_failure(self):
+        # manual_required is a deferred-action signal, not an error.
+        plan = self._run({
+            "success": False,
+            "error": "needs interactive input",
+            "status": "manual_required",
+            "requires_manual_action": True,
+        })
+        assert plan.steps[0].status == "done"
+
+    def test_step1_tool_failure_halts_dependent_step2(self):
+        # The payoff of marking a step "failed": a failed step 1 must stop the
+        # multi-step loop so a dependent step 2 never runs.
+        plan_json = (
+            '{"steps": ['
+            '{"step_number": 1, "description": "Run analysis", '
+            '"tool_needed": "CodeWhisper", "dependencies": []},'
+            '{"step_number": 2, "description": "Use the analysis", '
+            '"tool_needed": "CodeWhisper", "dependencies": [1]}]}'
+        )
+        engine = _ToolTurnEngine(plan_json, {"success": False, "error": "boom"})
+        ex = AgentExecutor(chat_engine=engine)
+        ex.execute_task("first analyze and then summarize", use_planning=True)
+        plan = ex.planner.plans[-1]
+
+        assert plan.steps[0].status == "failed"
+        assert plan.steps[1].status == "pending"  # never ran
+        assert plan.status == "failed"
+        assert engine.step_turns == 1  # only step 1 executed before the halt
+
+    def test_stale_prior_tool_failure_does_not_bleed_into_current_step(self):
+        # A failed tool message from an EARLIER turn must not mark this step
+        # failed; only tool messages from THIS turn count (prior_ids snapshot).
+        engine = _ToolTurnEngine(
+            self.PLAN_JSON,
+            {"success": True, "result": "fresh analysis ok"},
+            preseed_payload={"success": False, "error": "OLD failure"},
+        )
+        ex = AgentExecutor(chat_engine=engine)
+        ex.execute_task("analyze all the files", use_planning=True)
+        plan = ex.planner.plans[-1]
+
+        assert plan.steps[0].status == "done"
+        assert plan.steps[0].error_message is None
+
+
+class TestDetectToolFailure:
+    """Direct unit coverage of the failure predicate over multiple messages."""
+
+    @staticmethod
+    def _tool_msgs(*payloads):
+        return [
+            Message(role="tool", content=json.dumps(p)) for p in payloads
+        ]
+
+    def test_first_failure_is_returned_regardless_of_order(self):
+        msgs = self._tool_msgs(
+            {"success": True, "result": "ok"},
+            {"success": False, "error": "second failed"},
+        )
+        assert AgentExecutor._detect_tool_failure(msgs) == "second failed"
+
+    def test_failure_before_success_still_fails(self):
+        msgs = self._tool_msgs(
+            {"success": False, "error": "first failed"},
+            {"success": True, "result": "ok"},
+        )
+        assert AgentExecutor._detect_tool_failure(msgs) == "first failed"
+
+    def test_all_success_returns_none(self):
+        msgs = self._tool_msgs({"success": True, "result": "ok"})
+        assert AgentExecutor._detect_tool_failure(msgs) is None
 
 
 if __name__ == "__main__":
