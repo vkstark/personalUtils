@@ -14,8 +14,10 @@ pip install -r requirements-dev.txt
 
 ### Run all tests
 ```bash
-pytest
+pytest -p no:flake8 -p no:mypy
 ```
+> The `pytest-flake8` / `pytest-mypy` dev plugins are incompatible with current pytest and abort
+> collection, so disable them with `-p no:flake8 -p no:mypy`.
 
 ### Run tests for a specific utility
 ```bash
@@ -47,6 +49,12 @@ pytest tests/test_file_diff.py::TestFileDiff::test_identical_files
 ```
 
 ## Test Structure
+
+Tests are organized to mirror the source layout (all collected recursively under `tests/`):
+
+- `tests/test_*.py` — the 12 utility suites plus `test_tool_contracts.py` / `test_tool_result.py`
+- `tests/agents/` — TaskPlanner, Reasoner, AgentExecutor routing, AgentManager (personas + switching)
+- `tests/chatsystem/` — config/conversation, I/O batching, ToolMetrics telemetry
 
 Each utility has comprehensive test coverage including:
 

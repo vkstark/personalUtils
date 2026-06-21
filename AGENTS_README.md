@@ -309,11 +309,11 @@ teacher = manager.get_agent(AgentType.FRAMEWORK_TEACHER)
 framework = teacher.teach("How do I build resilience?")
 ```
 
-### Via Test Script
+### Via Test Suite
 
 ```bash
-# Run comprehensive tests
-python test_agents.py
+# Run the agent test suite (planner, reasoner, manager, personas, switching)
+python -m pytest tests/agents/
 ```
 
 ---
@@ -437,7 +437,7 @@ agents/
 
 For issues or enhancements:
 1. Check the agent source code for detailed personas
-2. Run `test_agents.py` to verify functionality
+2. Run `python -m pytest tests/agents/` to verify functionality
 3. Modify `config.yaml` for custom behavior
 4. Edit agent `SYSTEM_PERSONA` for customization
 
