@@ -131,6 +131,36 @@ class TestTaskPlanner:
         assert len(plan.steps) == 2
         assert plan.steps[0].step_number == 1
 
+    def test_create_plan_renumbers_duplicate_step_numbers(self):
+        # LLM restarts numbering: 1, 2, 1, 3 -> must become unique 1..4
+        text = "1. first\n2. second\n1. another first\n3. third"
+        planner = TaskPlanner(chat_engine=_FakeEngine(responses=[text]))
+        plan = planner.create_plan("x", [])
+        assert [s.step_number for s in plan.steps] == [1, 2, 3, 4]
+
+    def test_create_plan_drops_hallucinated_dependency(self):
+        plan_json = (
+            '{"steps": ['
+            '{"step_number": 1, "description": "a", "dependencies": [99]},'
+            '{"step_number": 2, "description": "b", "dependencies": [1]}]}'
+        )
+        planner = TaskPlanner(chat_engine=_FakeEngine(responses=[plan_json]))
+        plan = planner.create_plan("x", [])
+        assert plan.steps[0].dependencies == []   # dep on non-existent step dropped
+        assert plan.steps[1].dependencies == [1]  # real dep preserved
+
+    def test_create_plan_breaks_dependency_cycle(self):
+        plan_json = (
+            '{"steps": ['
+            '{"step_number": 1, "description": "a", "dependencies": [2]},'
+            '{"step_number": 2, "description": "b", "dependencies": [1]}]}'
+        )
+        planner = TaskPlanner(chat_engine=_FakeEngine(responses=[plan_json]))
+        plan = planner.create_plan("x", [])
+        # forward-only deps break the cycle: step 1 runs first, step 2 depends on it
+        assert plan.steps[0].dependencies == []
+        assert plan.steps[1].dependencies == [1]
+
 
 class TestReasoner:
     """Chain-of-thought tracking and trace export."""

@@ -131,6 +131,12 @@ class TestDuplicateFinder:
         (temp_dir / "File.txt").write_text("content1")
         (temp_dir / "file.txt").write_text("content2")
 
+        # This test is only meaningful on a case-sensitive filesystem. On a
+        # case-insensitive one (e.g. the default macOS APFS), "File.txt" and
+        # "file.txt" collapse to a single file, so the scenario can't exist.
+        if len(list(temp_dir.iterdir())) < 2:
+            pytest.skip("case-insensitive filesystem: File.txt and file.txt are the same file")
+
         # Case-insensitive (default)
         duplicates = finder.find_by_name([str(temp_dir)], case_sensitive=False)
         assert len(duplicates) == 1

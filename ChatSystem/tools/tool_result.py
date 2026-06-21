@@ -12,8 +12,8 @@ Every tool execution must return a ToolExecutionResult to ensure:
 
 from enum import Enum
 from typing import Optional, Dict, Any
-from datetime import datetime
-from pydantic import BaseModel, Field, ConfigDict
+from datetime import datetime, timezone
+from pydantic import BaseModel, Field
 
 
 class ToolStatus(str, Enum):
@@ -64,7 +64,7 @@ class ToolExecutionResult(BaseModel):
 
     # Performance metrics
     duration: float  # seconds
-    timestamp: datetime = Field(default_factory=datetime.now)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Tool metadata
     tool_name: str
@@ -79,12 +79,8 @@ class ToolExecutionResult(BaseModel):
     error_message: Optional[str] = None
     error_type: Optional[str] = None
 
-    # Pydantic v2 configuration
-    model_config = ConfigDict(
-        json_encoders={
-            datetime: lambda v: v.isoformat()
-        }
-    )
+    # Note: pydantic v2 serializes datetime fields to ISO 8601 by default in
+    # JSON mode, so no custom encoder is needed.
 
     def is_success(self) -> bool:
         """Check if the execution was successful"""

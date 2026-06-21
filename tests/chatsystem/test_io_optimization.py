@@ -63,6 +63,7 @@ class TestIOOptimization:
         mock_settings.max_tokens = 4096
         mock_settings.parallel_tool_calls = True
         mock_settings.enable_tools = True
+        mock_settings.max_tool_call_depth = 5
 
         # Mock conversation
         mock_conv = MagicMock(spec=ConversationManager)
@@ -136,6 +137,7 @@ class TestIOOptimization:
         mock_settings.max_tokens = 4096
         mock_settings.parallel_tool_calls = True
         mock_settings.enable_tools = True
+        mock_settings.max_tool_call_depth = 5
 
         with patch('ChatSystem.core.chat_engine.OpenAI'), \
              patch('json.dump') as mock_dump:
