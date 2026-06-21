@@ -3,14 +3,15 @@
 Conversation Manager - Handle message history and context
 """
 
+import os
 import json
 import tiktoken
 import contextlib
 import collections
 from typing import List, Dict, Any, Optional, Literal, TYPE_CHECKING
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from pydantic import BaseModel, Field, PrivateAttr, TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter
 
 if TYPE_CHECKING:
     from ChatSystem.core.chat_engine import ChatEngine
@@ -39,7 +40,7 @@ class Message(BaseModel):
     name: Optional[str] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_call_id: Optional[str] = None
-    timestamp: datetime = Field(default_factory=datetime.now)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     tokens: Optional[int] = None
 
     def get_token_count(self, encoding: Any) -> int:
@@ -126,6 +127,9 @@ class ConversationManager:
         system_prompt: Optional[str] = None,
         auto_save: bool = True,
         history_file: Optional[str] = None,
+        auto_summarize_enabled: bool = True,
+        summarize_threshold: float = 0.85,
+        summarize_target_ratio: float = 0.6,
     ):
         """
         Initializes the ConversationManager.
@@ -145,6 +149,9 @@ class ConversationManager:
         self.max_tokens = max_tokens
         self.messages: List[Message] = []
         self.auto_save = auto_save
+        self.auto_summarize_enabled = auto_summarize_enabled
+        self.summarize_threshold = summarize_threshold
+        self.summarize_target_ratio = summarize_target_ratio
         self._total_tokens = 0
         self._role_counts = collections.defaultdict(int)
         self._batch_save_count = 0
@@ -160,9 +167,10 @@ class ConversationManager:
         else:
             self.history_file = Path.home() / ".chatsystem_history.json"
 
-        # Ensure history directory exists
+        # Ensure history directory exists (restrict perms on any dir we create —
+        # the history can contain conversation content and tool output)
         try:
-            self.history_file.parent.mkdir(parents=True, exist_ok=True)
+            self.history_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         except Exception as e:
             print(f"Warning: Could not create history directory: {e}")
 
@@ -455,11 +463,19 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
                 ]
             history_data = {
                 "model": self.model,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "messages": self._cached_dumped_messages,
             }
 
-            with open(self.history_file, "w", encoding="utf-8") as f:
+            # Restrict to owner-only (0600) before writing secrets-bearing content.
+            # Open with O_CREAT|O_WRONLY|O_TRUNC and mode 0o600 so the file is never
+            # briefly world-readable on creation; re-chmod handles pre-existing files.
+            fd = os.open(self.history_file, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+            try:
+                os.chmod(self.history_file, 0o600)
+            except OSError:
+                pass
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 # Use compact serialization (no indent, separators=(',', ':')) for speed and size
                 # We already used mode='json' in model_dump, so default=str is no longer needed
                 json.dump(history_data, f, separators=(',', ':'))
@@ -612,8 +628,11 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             # Too few messages to summarize meaningfully
             return "Conversation too short to summarize"
 
-        # Determine split point - keep recent 30% of messages, summarize the rest
-        keep_recent_count = max(3, int(len(other_messages) * 0.3))
+        # Determine split point. target_ratio is the fraction of recent messages
+        # to keep verbatim; the older remainder is compressed into a summary.
+        keep_fraction = min(0.9, max(0.1, target_ratio))
+        keep_recent_count = max(3, int(len(other_messages) * keep_fraction))
+        keep_recent_count = min(keep_recent_count, len(other_messages) - 1)
         messages_to_summarize = other_messages[:-keep_recent_count]
         messages_to_keep = other_messages[-keep_recent_count:]
 
@@ -731,7 +750,25 @@ Provide a concise summary in 3-5 paragraphs that captures:
 
         if usage_ratio >= threshold:
             # Trigger summarization
-            self.summarize_conversation(chat_engine=chat_engine, target_ratio=0.6)
+            self.summarize_conversation(chat_engine=chat_engine, target_ratio=self.summarize_target_ratio)
             return True
 
         return False
+
+    def maybe_auto_summarize(self, chat_engine: Optional['ChatEngine'] = None) -> bool:
+        """
+        Auto-summarize using this manager's configured settings.
+
+        Honors ``auto_summarize_enabled`` and ``summarize_threshold`` from config.
+        Defaults to a structural (non-LLM) summary so it is cheap and
+        recursion-free when called inside the live chat loop; pass ``chat_engine``
+        for an LLM-based summary (used by the explicit ``/summarize`` command).
+
+        Returns:
+            bool: True if summarization was performed.
+        """
+        if not self.auto_summarize_enabled:
+            return False
+        return self.auto_summarize_if_needed(
+            chat_engine=chat_engine, threshold=self.summarize_threshold
+        )

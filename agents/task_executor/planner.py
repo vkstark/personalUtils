@@ -144,6 +144,7 @@ Important:
 
         # Parse the JSON response
         steps = self._parse_plan_response(response, available_tools)
+        steps = self._normalize_steps(steps)
 
         # Create TaskPlan
         plan = TaskPlan(
@@ -197,9 +198,47 @@ Important:
                 # Fallback: parse numbered list format
                 steps = self._parse_numbered_list(response, available_tools)
 
-        except (json.JSONDecodeError, KeyError, ValueError) as e:
+        except (json.JSONDecodeError, KeyError, ValueError):
             # Fallback: parse numbered list format
             steps = self._parse_numbered_list(response, available_tools)
+
+        return steps
+
+    def _normalize_steps(self, steps: List[TaskStep]) -> List[TaskStep]:
+        """
+        Make step numbering safe for execution.
+
+        LLM-generated plans can contain duplicate / restarted step numbers and
+        dependencies on non-existent (hallucinated) or cyclic step numbers. Left
+        unfixed, these cause silent execution deadlocks (a step whose dependency
+        never completes) or wrong-target status updates. This renumbers steps
+        sequentially (1..N, guaranteeing uniqueness) and rewrites each step's
+        dependencies to reference only real, earlier steps (forward-only, which
+        also breaks cycles).
+
+        Args:
+            steps: Parsed steps, possibly with duplicate numbers or bad deps.
+
+        Returns:
+            The same list with normalized step_number and dependencies.
+        """
+        if not steps:
+            return steps
+
+        # Map each original step_number to the position of its FIRST occurrence.
+        old_to_new: Dict[int, int] = {}
+        for i, step in enumerate(steps, start=1):
+            old_to_new.setdefault(step.step_number, i)
+
+        for i, step in enumerate(steps, start=1):
+            remapped = []
+            for dep in step.dependencies:
+                mapped = old_to_new.get(dep)
+                # Keep only dependencies that point at a real, earlier step.
+                if mapped is not None and mapped < i and mapped not in remapped:
+                    remapped.append(mapped)
+            step.dependencies = remapped
+            step.step_number = i
 
         return steps
 

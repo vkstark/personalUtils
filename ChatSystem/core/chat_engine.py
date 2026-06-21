@@ -13,12 +13,13 @@ from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMe
 from .config import Settings, calculate_cost
 from .conversation import ConversationManager
 from .tool_metrics import ToolMetrics
-from ..tools.tool_result import ToolExecutionResult, ToolStatus
+from ..tools.tool_result import ToolExecutionResult
 
 
 class ChatEngine:
-    # Reasoning models (o1, o3 series) have different parameter requirements
-    REASONING_MODELS = ("o1-preview", "o1-mini", "o3", "o3-mini")
+    # Reasoning-style models (o1/o3 series and gpt-5) have different parameter
+    # requirements: no `temperature`, and `max_completion_tokens` not `max_tokens`.
+    REASONING_MODELS = ("o1-preview", "o1-mini", "o3", "o3-mini", "gpt-5")
 
     """
     The main engine for handling chat interactions with OpenAI's GPT models.
@@ -60,13 +61,21 @@ class ChatEngine:
         self.settings = settings or get_settings()
         self.client = OpenAI(api_key=self.settings.openai_api_key)
 
-        # Initialize conversation manager
+        # Initialize conversation manager from the conversation config block.
+        # NOTE: the context window is `max_tokens_default` (e.g. 128000), NOT the
+        # completion cap `settings.max_tokens` (e.g. 4096) — those are different limits.
         if conversation:
             self.conversation = conversation
         else:
+            conv_cfg = self.settings.get_conversation_config()
             self.conversation = ConversationManager(
                 model=self.settings.model_name,
-                max_tokens=self.settings.max_tokens,
+                max_tokens=conv_cfg["max_tokens_default"],
+                auto_save=conv_cfg["auto_save_history"],
+                history_file=self.settings.history_file,
+                auto_summarize_enabled=conv_cfg["auto_summarize_enabled"],
+                summarize_threshold=conv_cfg["summarize_threshold"],
+                summarize_target_ratio=conv_cfg["summarize_target_ratio"],
             )
 
         # Tool registry (will be set by tool system)
@@ -75,7 +84,7 @@ class ChatEngine:
         
         # Tool call recursion tracking
         self.tool_call_depth = 0
-        self.max_tool_call_depth = 5  # Prevent infinite recursion
+        self.max_tool_call_depth = self.settings.max_tool_call_depth  # Prevent infinite recursion
 
         # Statistics
         self.stats = {
@@ -172,6 +181,9 @@ class ChatEngine:
         if not tool_calls_handled and response:
             self.conversation.add_message(role="assistant", content=response)
 
+        # Compress context if it has grown past the configured threshold
+        self.conversation.maybe_auto_summarize()
+
         yield response
 
     def _chat_generator(self, model: str, max_tokens: int, temperature: float) -> Iterator[str]:
@@ -203,6 +215,9 @@ class ChatEngine:
             full_response = "".join(full_response_parts)
             if full_response:
                 self.conversation.add_message(role="assistant", content=full_response)
+
+        # Compress context if it has grown past the configured threshold
+        self.conversation.maybe_auto_summarize()
 
     def _chat_completion(
         self, model: str, max_tokens: int, temperature: float
@@ -271,7 +286,10 @@ class ChatEngine:
         message = response.choices[0].message
 
         if message.tool_calls:
-            tool_response = self._handle_tool_calls(message.tool_calls, model, max_tokens, temperature)
+            tool_response = self._handle_tool_calls(
+                message.tool_calls, model, max_tokens, temperature,
+                assistant_content=message.content,
+            )
             return tool_response, True  # Tool calls were handled
 
         return message.content or "", False  # No tool calls
@@ -331,6 +349,7 @@ class ChatEngine:
 
         # Collect streamed response
         tool_calls = []
+        content_parts = []
 
         for chunk in stream:
             chunk: ChatCompletionChunk
@@ -342,6 +361,7 @@ class ChatEngine:
 
             # Handle content
             if delta.content:
+                content_parts.append(delta.content)
                 yield delta.content, False
 
             # Handle tool calls
@@ -377,9 +397,10 @@ class ChatEngine:
                     )
                 )
 
-            # Process tool calls
+            # Process tool calls (preserving any streamed preamble text)
             tool_response = self._handle_tool_calls(
-                formatted_tool_calls, model, max_tokens, temperature
+                formatted_tool_calls, model, max_tokens, temperature,
+                assistant_content="".join(content_parts) or None,
             )
 
             yield "\n\n" + tool_response, True
@@ -442,9 +463,14 @@ class ChatEngine:
         model: str,
         max_tokens: int,
         temperature: float,
+        assistant_content: Optional[str] = None,
     ) -> str:
         """
         Handles the execution of tool calls requested by the model.
+
+        Args:
+            assistant_content: Any assistant text emitted alongside the tool
+                calls (e.g. a streamed preamble), preserved in history.
         """
         if not self.tool_executor:
             return "Error: Tool executor not configured"
@@ -460,10 +486,10 @@ class ChatEngine:
 
             # Wrap multiple message additions in batch_saves to optimize disk I/O
             with self.conversation.batch_saves():
-                # Add assistant message with tool calls
+                # Add assistant message with tool calls (preserving any preamble text)
                 self.conversation.add_message(
                     role="assistant",
-                    content=None,
+                    content=assistant_content or None,
                     tool_calls=[tc.model_dump() for tc in tool_calls],
                 )
 
@@ -509,8 +535,17 @@ class ChatEngine:
                                     )
                                     tool_results.append(result_dict)
                                 except Exception as e:
-                                    # Fallback to single executor for error reporting if thread failed
-                                    tool_results.append(self._execute_single_tool_call(tc))
+                                    # The tool already ran in its worker thread; re-executing
+                                    # via _execute_single_tool_call would double-run a
+                                    # side-effecting tool. Record the error for this call instead.
+                                    error_msg = f"Error executing tool {tc.function.name}: {str(e)}"
+                                    self.conversation.add_message(
+                                        role="tool",
+                                        content=json.dumps({"error": error_msg}),
+                                        tool_call_id=tc.id,
+                                        name=tc.function.name,
+                                    )
+                                    tool_results.append({"error": error_msg})
                 else:
                     # Sequential execution (standard path)
                     for tool_call in tool_calls:

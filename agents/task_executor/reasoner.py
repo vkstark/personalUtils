@@ -8,7 +8,7 @@ Version 1.2: Enhanced with elapsed time, tool outputs, and trace export
 import time
 import json
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 
 
@@ -31,7 +31,7 @@ class ReasoningStep(BaseModel):
     observation: Optional[str] = None
     elapsed_time: float = 0.0
     tool_outputs: Optional[Dict[str, Any]] = None
-    timestamp: datetime = Field(default_factory=datetime.now)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -172,7 +172,7 @@ class Reasoner:
             "reasoning_trace": [step.model_dump() for step in self.reasoning_chain],
             "total_steps": len(self.reasoning_chain),
             "total_time": sum(step.elapsed_time for step in self.reasoning_chain),
-            "exported_at": datetime.now().isoformat()
+            "exported_at": datetime.now(timezone.utc).isoformat()
         }
 
     def export_trace_markdown(self) -> str:
@@ -198,20 +198,20 @@ class Reasoner:
                 md.append("")
 
             if step.observation:
-                md.append(f"**Observation:**")
-                md.append(f"```")
+                md.append("**Observation:**")
+                md.append("```")
                 md.append(step.observation)
-                md.append(f"```")
+                md.append("```")
                 md.append("")
 
             if step.tool_outputs:
-                md.append(f"**Tool Outputs:**")
+                md.append("**Tool Outputs:**")
                 for tool_name, output in step.tool_outputs.items():
                     md.append(f"- **{tool_name}:**")
                     if isinstance(output, dict):
-                        md.append(f"  ```json")
+                        md.append("  ```json")
                         md.append(f"  {json.dumps(output, indent=2)}")
-                        md.append(f"  ```")
+                        md.append("  ```")
                     else:
                         md.append(f"  {output}")
                 md.append("")

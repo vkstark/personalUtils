@@ -26,7 +26,14 @@ class ToolRegistry:
             definitions for the enabled tools.
     """
 
-    def __init__(self, utils_dir: Optional[str] = None, enabled_tools: Optional[List[str]] = None):
+    def __init__(
+        self,
+        utils_dir: Optional[str] = None,
+        enabled_tools: Optional[List[str]] = None,
+        timeout: int = 60,
+        sandbox_root: Optional[str] = None,
+        allowed_url_hosts: Optional[List[str]] = None,
+    ):
         """
         Initializes the ToolRegistry.
 
@@ -35,9 +42,17 @@ class ToolRegistry:
                 utility tools. Defaults to None.
             enabled_tools (Optional[List[str]], optional): A list of tool names
                 to enable. If None, all tools are enabled. Defaults to None.
+            timeout (int, optional): Per-tool subprocess timeout in seconds.
+            sandbox_root (Optional[str], optional): Restrict path args to this root.
+            allowed_url_hosts (Optional[List[str]], optional): SSRF allow-list.
         """
         self.utils_dir = utils_dir
-        self.executor = ToolExecutor(utils_dir)
+        self.executor = ToolExecutor(
+            utils_dir,
+            timeout=timeout,
+            sandbox_root=sandbox_root,
+            allowed_url_hosts=allowed_url_hosts,
+        )
         self.adapter = ToolAdapter()
 
         # Get enabled tools

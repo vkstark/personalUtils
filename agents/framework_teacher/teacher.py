@@ -491,7 +491,8 @@ You are a FRAMEWORK ENGINE that manufactures better thinkers.
         self,
         chat_engine: Optional[ChatEngine] = None,
         settings: Optional[Settings] = None,
-        max_iterations: int = 3
+        max_iterations: int = 3,
+        model: Optional[str] = None
     ):
         """
         Initializes the FrameworkTeacher agent.
@@ -507,6 +508,7 @@ You are a FRAMEWORK ENGINE that manufactures better thinkers.
         self.chat_engine = chat_engine or ChatEngine()
         self.settings = settings or Settings()
         self.max_iterations = max_iterations
+        self.model = model
 
         # Set the system persona
         self.chat_engine.conversation.add_message("system", self.SYSTEM_PERSONA)
@@ -530,7 +532,7 @@ You are a FRAMEWORK ENGINE that manufactures better thinkers.
         response_gen = self.chat_engine.chat(
             message=user_request,
             stream=False,
-            model=self.settings.get_model_for_task("reasoning")
+            model=self.model or self.settings.get_model_for_task("reasoning")
         )
 
         # Consume the iterator (single yield for non-streaming)
@@ -547,7 +549,7 @@ You are a FRAMEWORK ENGINE that manufactures better thinkers.
         Returns:
             str: A formatted list of the available frameworks.
         """
-        list_prompt = f"""List the frameworks you can teach"""
+        list_prompt = """List the frameworks you can teach"""
 
         if category:
             list_prompt += f""" in the category: {category}"""
@@ -561,7 +563,7 @@ You are a FRAMEWORK ENGINE that manufactures better thinkers.
         response_gen = self.chat_engine.chat(
             message=list_prompt,
             stream=False,
-            model=self.settings.get_model_for_task("general")
+            model=self.model or self.settings.get_model_for_task("general")
         )
 
         # Consume the iterator (single yield for non-streaming)
@@ -591,7 +593,7 @@ Be concise - max 200 words."""
         response_gen = self.chat_engine.chat(
             message=quick_prompt,
             stream=False,
-            model=self.settings.get_model_for_task("general")
+            model=self.model or self.settings.get_model_for_task("general")
         )
 
         # Consume the iterator (single yield for non-streaming)

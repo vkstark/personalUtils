@@ -10,14 +10,14 @@ This module provides comprehensive metrics tracking for each tool, enabling:
 """
 
 import collections
-from typing import Dict, List, Optional, Any
+from typing import Dict, Optional, Any
 from datetime import datetime
 from dataclasses import dataclass, field
 
 # Import at runtime to avoid circular dependency
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from ..tools.tool_result import ToolExecutionResult, ToolStatus
+    from ..tools.tool_result import ToolExecutionResult
 
 
 @dataclass

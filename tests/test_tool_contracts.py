@@ -48,7 +48,7 @@ class TestToolContracts:
 
     @pytest.mark.parametrize("function_name", [
         "analyze_python_code",
-        "test_api_endpoint",
+        pytest.param("test_api_endpoint", marks=pytest.mark.network),
         "find_duplicate_files",
         "manage_code_snippets",
         "bulk_rename_files",
@@ -110,6 +110,7 @@ class TestToolContracts:
         assert result.status == ToolStatus.ERROR
         assert result.error_message is not None
 
+    @pytest.mark.network
     def test_api_tester_success(self, executor):
         """APITester: test a real HTTP endpoint"""
         result = executor.execute("test_api_endpoint", {

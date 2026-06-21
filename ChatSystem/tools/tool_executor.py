@@ -7,12 +7,27 @@ Version 2.0: Returns structured ToolExecutionResult for all executions
 
 import sys
 import json
+import socket
+import ipaddress
 import subprocess
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from pathlib import Path
+from urllib.parse import urlparse
 
 from .tool_result import ToolExecutionResult, ToolStatus
+
+
+def _is_blocked_ip(ip_str: str) -> bool:
+    """True if the IP is loopback/link-local/private/reserved (SSRF targets)."""
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return False
+    return (
+        ip.is_loopback or ip.is_link_local or ip.is_private
+        or ip.is_reserved or ip.is_multicast or ip.is_unspecified
+    )
 
 
 class ToolExecutor:
@@ -30,7 +45,13 @@ class ToolExecutor:
             name to the relative path of the utility script.
     """
 
-    def __init__(self, utils_dir: Optional[str] = None):
+    def __init__(
+        self,
+        utils_dir: Optional[str] = None,
+        timeout: int = 60,
+        sandbox_root: Optional[str] = None,
+        allowed_url_hosts: Optional[List[str]] = None,
+    ):
         """
         Initializes the ToolExecutor.
 
@@ -38,6 +59,16 @@ class ToolExecutor:
             utils_dir (Optional[str], optional): The directory containing the
                 utility tools. If not provided, it is inferred from the location
                 of this file. Defaults to None.
+            timeout (int, optional): Per-tool subprocess timeout in seconds.
+                Defaults to 60.
+            sandbox_root (Optional[str], optional): If set, every path-typed tool
+                argument must resolve within this directory; out-of-root paths are
+                rejected (defends against arbitrary file read / exfiltration). If
+                None, no path sandboxing is applied. Defaults to None.
+            allowed_url_hosts (Optional[List[str]], optional): Hostnames that are
+                always permitted for the API-tester tool even if they resolve to a
+                private address. Non-http(s) schemes and private/loopback/link-local
+                destinations are otherwise blocked (SSRF defense). Defaults to None.
         """
         # Get utilities directory
         if utils_dir:
@@ -45,6 +76,10 @@ class ToolExecutor:
         else:
             # Assume we're in ChatSystem, go up one level
             self.utils_dir = Path(__file__).parent.parent.parent
+
+        self.timeout = timeout
+        self.sandbox_root = Path(sandbox_root).resolve() if sandbox_root else None
+        self.allowed_url_hosts = set(allowed_url_hosts or [])
 
         # Map function names to utility modules
         self.function_to_util = {
@@ -61,6 +96,53 @@ class ToolExecutor:
             "extract_todos": "tools/TodoExtractor/todo_extractor.py",
             "convert_data_format": "tools/DataConvert/data_convert.py",
         }
+
+    # Argument keys that are filesystem paths (validated against the sandbox root)
+    _PATH_ARG_KEYS = ("path", "file1", "file2", "file_path", "input_file", "output_file", "repo_path")
+
+    def _check_path(self, value: str) -> Optional[str]:
+        """Return an error message if `value` is outside the sandbox root, else None."""
+        if self.sandbox_root is None or not value:
+            return None
+        try:
+            resolved = Path(value).resolve()
+        except (OSError, ValueError):
+            return f"Invalid path: {value}"
+        if resolved == self.sandbox_root or resolved.is_relative_to(self.sandbox_root):
+            return None
+        return f"Path '{value}' is outside the allowed root ({self.sandbox_root})"
+
+    def _check_url(self, url: Optional[str]) -> Optional[str]:
+        """Return an error message if `url` is an unsafe SSRF target, else None."""
+        parsed = urlparse(url or "")
+        if parsed.scheme not in ("http", "https"):
+            return f"Only http/https URLs are allowed (got scheme '{parsed.scheme or 'none'}')"
+        host = parsed.hostname or ""
+        if host in self.allowed_url_hosts:
+            return None
+        # Block literal private IPs and hostnames that resolve to them
+        if _is_blocked_ip(host):
+            return f"Refusing to call internal/private address: {host}"
+        try:
+            resolved_ips = {info[4][0] for info in socket.getaddrinfo(host, None)}
+        except (socket.gaierror, OSError):
+            return None  # let the subprocess surface DNS failures
+        for ip in resolved_ips:
+            if _is_blocked_ip(ip):
+                return f"Refusing to call host '{host}' which resolves to a private/internal address ({ip})"
+        return None
+
+    def _validate_arguments(self, function_name: str, args: Dict[str, Any]) -> Optional[str]:
+        """Run security checks on path and URL arguments. Returns an error or None."""
+        for key in self._PATH_ARG_KEYS:
+            value = args.get(key)
+            if isinstance(value, str):
+                err = self._check_path(value)
+                if err:
+                    return err
+        if function_name == "test_api_endpoint":
+            return self._check_url(args.get("url"))
+        return None
 
     def execute(self, function_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -89,6 +171,17 @@ class ToolExecutor:
                 duration=time.time() - start_time,
                 error_message=f"Unknown function: {function_name}",
                 error_type="UnknownFunctionError"
+            )
+
+        # Security checks (path sandbox + SSRF) before doing any work
+        security_error = self._validate_arguments(function_name, arguments)
+        if security_error:
+            return ToolExecutionResult(
+                status=ToolStatus.ERROR,
+                tool_name=function_name,
+                duration=time.time() - start_time,
+                error_message=security_error,
+                error_type="SecurityError",
             )
 
         try:
@@ -217,9 +310,10 @@ class ToolExecutor:
             action = args["action"]
 
             if action == "parse":
-                # Parse and return env variables
-                cmd.extend([args.get("file_path", ".env")])
-                cmd.append("--no-color")
+                # EnvManager: the top-level `--no-color` flag must precede the
+                # subcommand; `list` prints the parsed variables. `--hide-values`
+                # keeps secret values out of the output (and conversation history).
+                cmd.extend(["--no-color", "list", args.get("file_path", ".env"), "--hide-values"])
             else:
                 message = f"EnvManager action '{action}' - execute manually"
                 return ToolExecutionResult(
@@ -309,6 +403,7 @@ class ToolExecutor:
             cmd.append(args["output_file"])
             cmd.extend(["--input-format", args["from_format"]])  # DataConvert uses --input-format
             cmd.extend(["--output-format", args["to_format"]])  # DataConvert uses --output-format
+            cmd.append("--no-color")  # keep ANSI escapes out of output returned to the model
 
         else:
             return ToolExecutionResult(
@@ -328,7 +423,7 @@ class ToolExecutor:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=self.timeout,
                 check=False,
                 shell=False  # Explicitly disable shell for security
             )
@@ -355,12 +450,13 @@ class ToolExecutor:
                 error_msg = result.stderr.strip() if result.stderr else f"Command failed with exit code {result.returncode}"
                 error_type = "SubprocessError"
 
-            # Determine if tool has side effects
+            # Determine if tool has side effects.
+            # Note: bulk_rename_files and non-parse manage_env_files actions return
+            # MANUAL_REQUIRED earlier and never reach this subprocess path; the only
+            # reachable EnvManager action here ("parse"/list) is read-only.
             has_side_effects = function_name in [
-                "bulk_rename_files",
-                "manage_env_files",
                 "manage_code_snippets",  # add/delete operations
-                "convert_data_format"  # writes output file
+                "convert_data_format",  # writes output file
             ]
 
             return ToolExecutionResult(
@@ -381,9 +477,9 @@ class ToolExecutor:
             return ToolExecutionResult(
                 status=ToolStatus.TIMEOUT,
                 tool_name=function_name,
-                duration=60.0,
+                duration=time.time() - start_time,
                 command=" ".join(cmd),
-                error_message="Command timed out after 60 seconds",
+                error_message=f"Command timed out after {self.timeout} seconds",
                 error_type="TimeoutError"
             )
 

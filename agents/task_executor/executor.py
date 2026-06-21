@@ -8,7 +8,6 @@ Version 1.2: Planner-backed execution with reasoning traces
 from typing import Optional
 from ChatSystem.core.chat_engine import ChatEngine
 from ChatSystem.core.config import Settings
-from ChatSystem.tools.tool_executor import ToolExecutor
 from .planner import TaskPlanner, TaskPlan, TaskStep
 from .reasoner import Reasoner
 
@@ -32,7 +31,6 @@ class AgentExecutor:
         planner (TaskPlanner): An instance of the task planner.
         reasoner (Reasoner): An instance of the reasoner to track the agent's
             thought process.
-        tool_executor (ToolExecutor): Executor for running tools directly.
     """
 
     SYSTEM_PERSONA = """You are a task execution agent with access to powerful utilities.
@@ -58,6 +56,7 @@ When executing tasks:
         settings: Optional[Settings] = None,
         max_iterations: int = 5,
         enable_planning: bool = True,
+        model: Optional[str] = None,
     ):
         """
         Initializes the AgentExecutor.
@@ -75,10 +74,10 @@ When executing tasks:
         self.settings = settings
         self.max_iterations = max_iterations
         self.enable_planning = enable_planning
+        self.model = model
 
         self.planner = TaskPlanner(chat_engine=chat_engine)
         self.reasoner = Reasoner()
-        self.tool_executor = ToolExecutor()
 
         # Add system persona to conversation
         tool_names = [tool.get("function", {}).get("name", "unknown")
@@ -162,7 +161,7 @@ When executing tasks:
         # Use chat engine to handle the request
         response_parts = []
 
-        for chunk in self.chat_engine.chat(request):
+        for chunk in self.chat_engine.chat(request, model=self.model):
             response_parts.append(chunk)
 
         response = "".join(response_parts)
@@ -240,8 +239,20 @@ When executing tasks:
         if self.planner.is_plan_complete(plan):
             plan.status = "done"
             results.append("\n✅ All steps completed successfully!")
+        elif self.planner.has_failed_steps(plan):
+            # Failure was already reported inline; ensure status reflects it.
+            plan.status = "failed"
         elif iteration >= self.max_iterations:
             results.append(f"\n⚠️  Max iterations ({self.max_iterations}) reached")
+            plan.status = "failed"
+        else:
+            # No runnable step remains but the plan isn't complete: remaining
+            # steps have unsatisfiable/cyclic dependencies. Surface it instead of
+            # exiting silently and dropping those steps.
+            stalled = [s for s in plan.steps if s.status == "pending"]
+            results.append(
+                f"\n⚠️  Stalled: {len(stalled)} step(s) could not run due to unmet dependencies"
+            )
             plan.status = "failed"
 
         # Attach reasoning trace to conversation
@@ -273,7 +284,7 @@ When executing tasks:
                 tool_request = f"Execute step {step.step_number}: {step.description}"
 
                 response_parts = []
-                for chunk in self.chat_engine.chat(tool_request):
+                for chunk in self.chat_engine.chat(tool_request, model=self.model):
                     response_parts.append(chunk)
 
                 result = "".join(response_parts)
@@ -293,7 +304,7 @@ When executing tasks:
             else:
                 # No tool needed, just use LLM
                 response_parts = []
-                for chunk in self.chat_engine.chat(step.description):
+                for chunk in self.chat_engine.chat(step.description, model=self.model):
                     response_parts.append(chunk)
 
                 result = "".join(response_parts)

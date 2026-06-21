@@ -34,35 +34,33 @@ python -m ChatSystem            # launch the interactive Rich CLI
 recursively):
 
 - `tests/test_*.py` — the 12 utility/tool suites + `test_tool_contracts.py` / `test_tool_result.py`
-- `tests/agents/` — planner, reasoner, executor routing, agent manager/personas/switching
-- `tests/chatsystem/` — config/conversation, I/O batching, ToolMetrics
+- `tests/agents/` — planner (incl. step normalization), reasoner, executor routing, agent manager/personas/switching
+- `tests/chatsystem/` — config accessors, conversation/summarization, I/O batching, ToolMetrics, security
 
 The agent/ChatSystem suites are hermetic (fake API key + stubbed OpenAI client, `auto_save=False`
 conversations); the tool suites shell out to the real utility subprocesses.
 
 ```bash
-pytest -p no:flake8 -p no:mypy                  # whole suite (the plugin flags are required — see below)
+pytest                                          # whole suite
+pytest -m "not network"                         # skip the few live-httpbin tests (offline/fast)
 pytest tests/agents/                            # one subdir
-pytest tests/test_tool_contracts.py             # one file
 pytest tests/test_tool_contracts.py::TestToolContracts::test_unknown_function_returns_execution_result
-pytest -m "not slow"                            # markers: slow / integration / unit (strict-markers is on)
+pytest -m "not slow"                            # markers: slow / integration / unit / network (strict-markers is on)
 pytest --cov=. --cov-report=html                # coverage (pytest-cov installed; off by default)
 ```
 
 Put new tests under the matching `tests/` subdir, not at the repo root (a bare root `test_*.py` is
-outside `testpaths` and won't be collected).
-
-**Two gotchas when running the full suite:**
-- `requirements-dev.txt` pins `pytest-flake8` / `pytest-mypy`, which are **incompatible with current
-  pytest** and abort collection with a `PluginValidationError`. Always pass `-p no:flake8 -p no:mypy`.
-- `tests/test_duplicate_finder.py::test_case_sensitive_name_matching` fails on a **case-insensitive
-  filesystem** (the macOS default) — it relies on `File.txt` ≠ `file.txt`. Pre-existing and
-  environmental, not a regression.
+outside `testpaths` and won't be collected). `test_case_sensitive_name_matching` auto-skips on a
+case-insensitive filesystem (the macOS default).
 
 ### Lint / typecheck
 
-`flake8` / `mypy` ship as dev deps but the repo has **no config and no enforced lint step** (and the
-pytest plugins for them are broken — see above). Run `flake8 .` / `mypy .` ad hoc if wanted.
+`ruff` and `mypy` are dev deps (run ad hoc — no enforced step / no config file yet):
+
+```bash
+ruff check ChatSystem agents      # F-checks are clean; keep them that way
+mypy ChatSystem agents            # optional
+```
 
 ## Architecture
 
@@ -146,25 +144,34 @@ multi-step; override with `use_planning=`.
 ### Config (`ChatSystem/core/config.py`, `config.yaml`, `.env`)
 
 `Settings` (Pydantic) loads `.env` for secrets/flags and caches the parsed `config.yaml` in a
-`PrivateAttr` (`get_settings()` is itself `lru_cache`d). `config.yaml` holds `models` (task→model map),
-`tools.enabled`, and per-agent blocks; lookups cascade agent-specific → `agent.*` defaults → `Settings`
-defaults. Invalid model names are rejected by validation.
+`PrivateAttr` (`get_settings()` is itself `lru_cache`d). Config is read through typed accessors that
+merge YAML over defaults and **are actually wired to runtime**:
+- `get_conversation_config()` → `ConversationManager` (context window `max_tokens_default`, auto-save,
+  auto-summarize threshold/ratio). `ChatEngine` builds the conversation from this and calls
+  `conversation.maybe_auto_summarize()` after each turn.
+- `get_agent_config_for(name)` → per-agent `model` + `enable_planning` + `max_iterations` passed into
+  each agent constructor (so `task_executor` now honors its configured model).
+- `get_cli_config()` → CLI theme / `show_token_usage`. `Settings.tool_timeout_seconds` /
+  `max_tool_call_depth` / `history_file` wire the previously-hardcoded knobs.
+
+Invalid model names are rejected by validation; `gpt-5` and the `o1`/`o3` family are treated as
+reasoning-style (no `temperature`, `max_completion_tokens`) via `ChatEngine.REASONING_MODELS`.
+
+### Security model (local, single-user)
+
+`ToolExecutor` accepts `sandbox_root` (path args must resolve inside it — the CLI roots this at the cwd)
+and an `allowed_url_hosts` SSRF allow-list (non-http(s) schemes and loopback/link-local/RFC1918
+destinations are rejected for the API-tester tool). Conversation history is written `0600` with a `0700`
+parent dir. Subprocess timeout is `Settings.tool_timeout_seconds`. Tools still run with `shell=False`.
 
 ## Gotchas / footguns
 
-- **Config drift — per-agent blocks barely wire up.** `agent_manager.py` passes **only
-  `max_iterations`** from each `agents.<name>` block into the agent constructors; `enable_planning` /
-  `enable_reasoning` set there never reach the executor (the constructor defaults win).
-  `persist_reasoning`, `auto_summarize` / `summarize_threshold`, `conversation.auto_summarize_enabled`
-  / `summarize_target_ratio`, and the entire `cli.*` block (`theme`, `show_timestamps`, …) are read by
-  **no** code. The `models:` task→model map *is* live, but only for agents that call
-  `chat_engine.chat(model=settings.get_model_for_task(...))` (e.g. the analyzer) — `task_executor`
-  doesn't, so it runs on the default `MODEL_NAME`, not its configured `o3-mini`. **Grep for a key
-  before assuming it does anything.**
-- A bare `pytest` aborts collection until the broken lint plugins are disabled: `-p no:flake8 -p no:mypy` (see Tests).
 - Tool stdout that isn't valid JSON is silently treated as plain text (`structured_payload=None`);
   validation messages can get swallowed.
-- The hardcoded 60s subprocess timeout kills long tool runs (big repos / large scans) → `TIMEOUT`.
+- Auto-summarization in the live loop is **structural** (no LLM, no cost/recursion); the explicit
+  `/summarize` command uses the LLM. `trim_context()` is still manual-only.
+- `_handle_tool_calls` re-raises nothing on a worker-thread failure — it records a per-call error
+  rather than re-running the tool (avoids double-running side-effecting tools).
 
 ## Repo docs
 

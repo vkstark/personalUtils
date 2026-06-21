@@ -5,15 +5,9 @@
 pytest>=7.0.0
 pytest-cov>=4.0.0
 
-# Code quality
-pytest-flake8>=1.1.0
-pytest-mypy>=0.10.0
-
-# Mocking and fixtures
-pytest-mock>=3.10.0
-
-# Testing utilities
-freezegun>=1.2.0  # For time-based testing
+# Code quality (run ad hoc: `ruff check .` / `mypy .`)
+ruff>=0.6.0
+mypy>=1.11.0
 
 # Additional utilities (if needed by the main code)
 PyYAML>=6.0  # For DataConvert

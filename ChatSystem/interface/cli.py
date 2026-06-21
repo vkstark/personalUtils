@@ -3,20 +3,19 @@
 ChatCLI - Interactive CLI interface with Rich formatting
 """
 
+import os
 import sys
+import logging
 from typing import Optional
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
-from rich.live import Live
-from rich.spinner import Spinner
 from rich.prompt import Prompt, Confirm
 from rich.progress import TextColumn
 
 from ..core.config import Settings, get_settings
 from ..core.chat_engine import ChatEngine
-from ..core.conversation import ConversationManager
 from ..tools.tool_registry import ToolRegistry
 from agents.agent_manager import AgentManager, AgentType
 
@@ -27,21 +26,21 @@ class ChatCLI:
     def __init__(self, settings: Optional[Settings] = None):
         self.settings = settings or get_settings()
         self.console = Console()
+        self.cli_config = self.settings.get_cli_config()
 
-        # Initialize components
-        self.conversation = ConversationManager(
-            model=self.settings.model_name,
-            max_tokens=self.settings.max_tokens,
-        )
+        # Let ChatEngine build the conversation from the conversation config
+        # (correct context window, auto-save, auto-summarize, history path).
+        self.chat_engine = ChatEngine(settings=self.settings)
+        self.conversation = self.chat_engine.conversation
 
-        self.chat_engine = ChatEngine(
-            settings=self.settings,
-            conversation=self.conversation,
-        )
-
-        # Initialize tools
+        # Initialize tools: sandbox path args to the working directory and apply
+        # the configured per-tool timeout (full security hardening).
         enabled_tools = self.settings.get_enabled_tools()
-        self.tool_registry = ToolRegistry(enabled_tools=enabled_tools)
+        self.tool_registry = ToolRegistry(
+            enabled_tools=enabled_tools,
+            timeout=self.settings.tool_timeout_seconds,
+            sandbox_root=os.getcwd(),
+        )
 
         # Register tools with chat engine
         tools = self.tool_registry.get_tools()
@@ -83,7 +82,10 @@ Type your message or try these commands:
 - `/exit` - Exit the chat
         """
 
-        self.console.print(Panel(Markdown(welcome_text), style="bold cyan", border_style="cyan"))
+        self.console.print(Panel(
+            Markdown(welcome_text, code_theme=self.cli_config["theme"]),
+            style="bold cyan", border_style="cyan"
+        ))
 
     def display_help(self):
         """Display help information"""
@@ -371,16 +373,10 @@ Type your message or try these commands:
 
         # Switch agent
         try:
-            # Create new chat engine for the new agent to avoid persona mixing
-            new_conversation = ConversationManager(
-                model=self.settings.model_name,
-                max_tokens=self.settings.max_tokens,
-            )
-
-            new_chat_engine = ChatEngine(
-                settings=self.settings,
-                conversation=new_conversation,
-            )
+            # Create a fresh chat engine (and its config-wired conversation) for the
+            # new agent to avoid persona mixing.
+            new_chat_engine = ChatEngine(settings=self.settings)
+            new_conversation = new_chat_engine.conversation
 
             # Register tools with new chat engine
             tools = self.tool_registry.get_tools()
@@ -496,6 +492,14 @@ Type your message or try these commands:
 
                 self.console.print()  # New line after response
 
+                # Optional per-response context footer (cli.show_token_usage)
+                if self.cli_config.get("show_token_usage"):
+                    usage = self.conversation.get_context_window_usage()
+                    self.console.print(
+                        f"[dim]Context: {usage['total_tokens']:,}/{usage['max_tokens']:,} "
+                        f"({usage['usage_percent']:.1f}%)[/dim]"
+                    )
+
             except KeyboardInterrupt:
                 self.console.print("\n\n[yellow]Interrupted. Use /exit to quit properly.[/yellow]\n")
                 continue  # Continue the loop instead of exiting
@@ -515,7 +519,14 @@ Type your message or try these commands:
 def main():
     """Main entry point"""
     try:
-        cli = ChatCLI()
+        settings = get_settings()
+        # Wire log_file / log_level (previously unused config)
+        logging.basicConfig(
+            filename=settings.log_file,
+            level=getattr(logging, settings.log_level, logging.INFO),
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
+        cli = ChatCLI(settings=settings)
         cli.run()
     except KeyboardInterrupt:
         print("\n\nGoodbye! 👋\n")

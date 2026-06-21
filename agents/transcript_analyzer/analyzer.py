@@ -356,7 +356,8 @@ Begin every analysis by carefully reading the transcript multiple times, then pr
         self,
         chat_engine: Optional[ChatEngine] = None,
         settings: Optional[Settings] = None,
-        max_iterations: int = 3
+        max_iterations: int = 3,
+        model: Optional[str] = None
     ):
         """
         Initializes the TranscriptAnalyzer agent.
@@ -372,6 +373,7 @@ Begin every analysis by carefully reading the transcript multiple times, then pr
         self.chat_engine = chat_engine or ChatEngine()
         self.settings = settings or Settings()
         self.max_iterations = max_iterations
+        self.model = model
 
         # Set the system persona
         self.chat_engine.conversation.add_message("system", self.SYSTEM_PERSONA)
@@ -402,7 +404,7 @@ Provide your complete analysis report following the structured format."""
         response_gen = self.chat_engine.chat(
             message=analysis_prompt,
             stream=False,
-            model=self.settings.get_model_for_task("reasoning")
+            model=self.model or self.settings.get_model_for_task("reasoning")
         )
 
         # Consume the iterator (single yield for non-streaming)
@@ -435,7 +437,7 @@ Keep it brief and punchy.
         response_gen = self.chat_engine.chat(
             message=summary_prompt,
             stream=False,
-            model=self.settings.get_model_for_task("general")
+            model=self.model or self.settings.get_model_for_task("general")
         )
 
         # Consume the iterator (single yield for non-streaming)

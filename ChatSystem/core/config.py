@@ -6,7 +6,7 @@ Loads from .env and provides validated settings
 
 import yaml
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from pydantic import Field, field_validator, PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     # Tool Settings
     enable_tools: bool = Field(default=True)
     parallel_tool_calls: bool = Field(default=False)
+    tool_timeout_seconds: int = Field(default=60, ge=1, le=3600, description="Per-tool subprocess timeout")
+
+    # Conversation / engine knobs
+    max_tool_call_depth: int = Field(default=5, ge=1, le=20, description="Max recursive tool-call depth")
+    history_file: Optional[str] = Field(default=None, description="Override path for conversation history JSON")
 
     # Agent Settings
     max_agent_iterations: int = Field(default=5, ge=1, le=20)
@@ -197,6 +202,62 @@ class Settings(BaseSettings):
             "enable_reasoning": agent_config.get("enable_reasoning", True),
             "timeout_seconds": agent_config.get("timeout_seconds", 300),
             "default_agent": agent_config.get("default_agent", "task_executor"),
+        }
+
+    def get_agent_config_for(self, agent_name: str) -> Dict[str, Any]:
+        """
+        Returns the resolved per-agent configuration, merging the agent-specific
+        `agents.<name>` YAML block over the general `agent` defaults.
+
+        Args:
+            agent_name (str): The config key for the agent (e.g. "task_executor").
+
+        Returns:
+            Dict[str, Any]: Resolved per-agent settings (model may be None,
+            meaning "let the agent pick its own task tier / default model").
+        """
+        base = self.get_agent_config()
+        agent = self.load_yaml_config().get("agents", {}).get(agent_name, {})
+        return {
+            "max_iterations": agent.get("max_iterations", base["max_iterations"]),
+            "enable_planning": agent.get("enable_planning", base["enable_planning"]),
+            "enable_reasoning": agent.get("enable_reasoning", base["enable_reasoning"]),
+            "model": agent.get("model"),
+            "timeout_seconds": agent.get("timeout_seconds", base["timeout_seconds"]),
+            "persist_reasoning": agent.get("persist_reasoning", True),
+            "auto_summarize": agent.get("auto_summarize", True),
+            "summarize_threshold": agent.get("summarize_threshold", 0.85),
+        }
+
+    def get_conversation_config(self) -> Dict[str, Any]:
+        """
+        Returns the `conversation` YAML block with defaults.
+
+        Returns:
+            Dict[str, Any]: Conversation persistence and summarization settings.
+        """
+        conv = self.load_yaml_config().get("conversation", {})
+        return {
+            "auto_save_history": conv.get("auto_save_history", True),
+            "auto_summarize_enabled": conv.get("auto_summarize_enabled", True),
+            "summarize_threshold": conv.get("summarize_threshold", 0.85),
+            "summarize_target_ratio": conv.get("summarize_target_ratio", 0.6),
+            "max_tokens_default": conv.get("max_tokens_default", 128000),
+        }
+
+    def get_cli_config(self) -> Dict[str, Any]:
+        """
+        Returns the `cli` YAML block with defaults.
+
+        Returns:
+            Dict[str, Any]: CLI presentation settings.
+        """
+        cli = self.load_yaml_config().get("cli", {})
+        return {
+            "theme": cli.get("theme", "monokai"),
+            "show_timestamps": cli.get("show_timestamps", True),
+            "show_token_usage": cli.get("show_token_usage", True),
+            "auto_save_history": cli.get("auto_save_history", True),
         }
 
 
