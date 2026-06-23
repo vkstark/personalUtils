@@ -10,6 +10,7 @@ Every tool execution must return a ToolExecutionResult to ensure:
 4. Type-safe result handling
 """
 
+import json
 from enum import Enum
 from typing import Optional, Dict, Any
 from datetime import datetime, timezone
@@ -106,8 +107,7 @@ class ToolExecutionResult(BaseModel):
             str: Primary output from the tool execution
         """
         if self.structured_payload:
-            import json
-            return json.dumps(self.structured_payload, indent=2)
+            return json.dumps(self.structured_payload, separators=(',', ':'))
         return self.stdout or self.stderr or ""
 
     def get_summary(self) -> str:
