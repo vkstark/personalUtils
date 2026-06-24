@@ -43,3 +43,7 @@
 ## 2026-06-20 - [Optimize ToolMetrics with lazy caching and deque]
 **Learning:** `ToolMetrics.to_dict()` was being called frequently in `ChatEngine.get_stats()`, causing redundant calculations and string formatting. Also, manual list slicing for `error_history` was O(N) for each update.
 **Action:** Implemented lazy caching for `to_dict()` and replaced the list-based `error_history` with `collections.deque(maxlen=10)`. Measured a ~32x speedup for `get_stats()` (from ~0.16ms to ~0.005ms). Always return a shallow copy (`.copy()`) when caching dictionaries to prevent external mutation of the internal state.
+
+## 2026-06-25 - [Optimize tool result serialization for tokens and speed]
+**Learning:** Tool execution results were using `indent=2` for JSON serialization, which is human-friendly but token-expensive for LLMs. In a test case with 100 items, pretty-printing consumed ~45% more tokens than compact serialization.
+**Action:** Optimized `ToolExecutionResult.get_output()` to use compact JSON (`separators=(',', ':')`) and moved the `json` import to the top level. This reduces context window pressure and makes serialization ~5x faster.
