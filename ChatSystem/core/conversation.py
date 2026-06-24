@@ -59,13 +59,14 @@ class Message(BaseModel):
         tokens = 0
         # Count tokens in content
         if self.content:
-            tokens += len(encoding.encode(self.content))
+            # Bolt: Use encode_ordinary for ~25% faster tokenization (safe for non-special-token text)
+            tokens += len(encoding.encode_ordinary(self.content))
 
         # Count tokens in tool calls
         if self.tool_calls:
             for tool_call in self.tool_calls:
                 tool_str = json.dumps(tool_call)
-                tokens += len(encoding.encode(tool_str))
+                tokens += len(encoding.encode_ordinary(tool_str))
 
         # Add overhead for message structure (approximate)
         tokens += 4
@@ -195,17 +196,28 @@ class ConversationManager:
         """
         Resets and recalculates the internal state from the current message list.
 
-        This includes total tokens, role counts, and cache invalidation.
+        This includes total tokens, role counts, and cache re-population.
         This is an O(N) operation and should be used after bulk message modifications.
         """
         self._total_tokens = 0
         self._role_counts = collections.defaultdict(int)
+        self._cached_openai_messages = []
+        self._cached_openai_messages_no_system = []
+        self._cached_dumped_messages = []
+        self._cached_summary = None
 
         for msg in self.messages:
             self._total_tokens += msg.get_token_count(self.encoding)
             self._role_counts[msg.role] += 1
 
-        self._invalidate_cache()
+            # Re-populate OpenAI caches in the same pass
+            openai_msg = msg.to_openai_format()
+            self._cached_openai_messages.append(openai_msg)
+            if msg.role != "system":
+                self._cached_openai_messages_no_system.append(openai_msg)
+
+            # Re-populate dumped messages cache
+            self._cached_dumped_messages.append(msg.model_dump(mode='json'))
 
     def _add_default_system_prompt(self):
         """
@@ -397,9 +409,14 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         if self._total_tokens <= target_tokens:
             return
 
-        # Always keep system message
-        system_messages = [m for m in self.messages if m.role == "system"]
-        other_messages = [m for m in self.messages if m.role != "system"]
+        # Bolt: Separate system and other messages in a single pass
+        system_messages = []
+        other_messages = []
+        for m in self.messages:
+            if m.role == "system":
+                system_messages.append(m)
+            else:
+                other_messages.append(m)
 
         # Track tokens as we remove messages
         current_tokens = self._total_tokens
@@ -508,21 +525,16 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             # Bolt: Use extend to preserve existing additive behavior
             self.messages.extend(new_messages)
 
-            # Bolt: Rebuild state and caches in a single optimized pass
-            self._total_tokens = 0
-            self._role_counts = collections.defaultdict(int)
-            self._cached_openai_messages = []
+            # Rebuild state and all caches in a single pass
+            self._reset_state()
 
-            for msg in self.messages:
-                self._total_tokens += msg.get_token_count(self.encoding)
-                self._role_counts[msg.role] += 1
-                self._cached_openai_messages.append(msg.to_openai_format())
-
-            # Bolt: Optimize dumped cache by reusing raw loaded data for the new part
-            # This avoids redundant model_dump calls on the entire history
-            existing_count = len(self.messages) - len(new_messages)
-            existing_dumped = [msg.model_dump(mode='json') for msg in self.messages[:existing_count]]
-            self._cached_dumped_messages = existing_dumped + raw_messages
+            # Bolt: Further optimize dumped cache by reusing raw loaded data for the new part
+            # if it's large, to avoid redundant model_dump calls.
+            # We only do this if we actually loaded something new.
+            if raw_messages:
+                existing_count = len(self.messages) - len(new_messages)
+                existing_dumped = [msg.model_dump(mode='json') for msg in self.messages[:existing_count]]
+                self._cached_dumped_messages = existing_dumped + raw_messages
 
         except Exception as e:
             print(f"Warning: Could not load history: {e}")
@@ -582,7 +594,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             "started_at": self.messages[0].timestamp if self.messages else None,
             "last_message_at": self.messages[-1].timestamp if self.messages else None,
         }
-        return self._cached_summary
+        return self._cached_summary.copy()
 
     @contextlib.contextmanager
     def batch_saves(self):
@@ -620,9 +632,14 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         if not self.messages:
             return "No messages to summarize"
 
-        # Keep system messages and recent messages
-        system_messages = [m for m in self.messages if m.role == "system"]
-        other_messages = [m for m in self.messages if m.role != "system"]
+        # Bolt: Separate system and other messages in a single pass
+        system_messages = []
+        other_messages = []
+        for m in self.messages:
+            if m.role == "system":
+                system_messages.append(m)
+            else:
+                other_messages.append(m)
 
         if len(other_messages) < 5:
             # Too few messages to summarize meaningfully
