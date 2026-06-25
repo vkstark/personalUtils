@@ -15,6 +15,9 @@ class ToolAdapter:
     tools, providing methods to retrieve them in the appropriate format.
     """
 
+    # Bolt: Cache for formatted OpenAI tool definitions to avoid redundant work
+    _formatted_cache: Dict[str, Dict[str, Any]] = {}
+
     # Tool definitions for all 12 utilities
     TOOL_DEFINITIONS = {
         "CodeWhisper": {
@@ -412,6 +415,28 @@ class ToolAdapter:
     }
 
     @classmethod
+    def _get_formatted_tool(cls, util_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieves and caches a formatted tool definition.
+        """
+        if util_name not in cls._formatted_cache:
+            definition = cls.TOOL_DEFINITIONS.get(util_name)
+            if not definition:
+                return None
+
+            cls._formatted_cache[util_name] = {
+                "type": "function",
+                "function": {
+                    "name": definition["name"],
+                    "description": definition["description"],
+                    "parameters": definition["parameters"],
+                }
+            }
+
+        # Return a copy to prevent external mutation
+        return cls._formatted_cache[util_name].copy()
+
+    @classmethod
     def get_all_tools(cls) -> List[Dict[str, Any]]:
         """
         Retrieves all available tools in the OpenAI function calling format.
@@ -424,21 +449,11 @@ class ToolAdapter:
             dictionary with a "type" of "function" and a "function" object
             containing the name, description, and parameters.
         """
-        tools = []
-
-        for util_name, definition in cls.TOOL_DEFINITIONS.items():
-            tool = {
-                "type": "function",
-                "function": {
-                    "name": definition["name"],
-                    "description": definition["description"],
-                    "parameters": definition["parameters"],
-                }
-            }
-
-            tools.append(tool)
-
-        return tools
+        # Bolt: Optimized to use cached formatted tools
+        return [
+            cls._get_formatted_tool(util_name)
+            for util_name in cls.TOOL_DEFINITIONS
+        ]
 
     @classmethod
     def get_tool_by_name(cls, name: str) -> Optional[Dict[str, Any]]:
@@ -453,16 +468,10 @@ class ToolAdapter:
             Optional[Dict[str, Any]]: The tool definition in OpenAI format if
             found, otherwise None.
         """
+        # Bolt: Optimized to use cached formatted tools
         for util_name, definition in cls.TOOL_DEFINITIONS.items():
             if definition["name"] == name:
-                return {
-                    "type": "function",
-                    "function": {
-                        "name": definition["name"],
-                        "description": definition["description"],
-                        "parameters": definition["parameters"],
-                    }
-                }
+                return cls._get_formatted_tool(util_name)
         return None
 
     @classmethod
@@ -481,19 +490,9 @@ class ToolAdapter:
             List[Dict[str, Any]]: A filtered list of tool definitions in the
             OpenAI format.
         """
-        tools = []
-
-        for util_name, definition in cls.TOOL_DEFINITIONS.items():
-            if util_name in enabled_utils:
-                tool = {
-                    "type": "function",
-                    "function": {
-                        "name": definition["name"],
-                        "description": definition["description"],
-                        "parameters": definition["parameters"],
-                    }
-                }
-
-                tools.append(tool)
-
-        return tools
+        # Bolt: Optimized to use cached formatted tools
+        return [
+            cls._get_formatted_tool(util_name)
+            for util_name in enabled_utils
+            if util_name in cls.TOOL_DEFINITIONS
+        ]
