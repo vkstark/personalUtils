@@ -43,3 +43,7 @@
 ## 2026-06-20 - [Optimize ToolMetrics with lazy caching and deque]
 **Learning:** `ToolMetrics.to_dict()` was being called frequently in `ChatEngine.get_stats()`, causing redundant calculations and string formatting. Also, manual list slicing for `error_history` was O(N) for each update.
 **Action:** Implemented lazy caching for `to_dict()` and replaced the list-based `error_history` with `collections.deque(maxlen=10)`. Measured a ~32x speedup for `get_stats()` (from ~0.16ms to ~0.005ms). Always return a shallow copy (`.copy()`) when caching dictionaries to prevent external mutation of the internal state.
+
+## 2026-06-25 - [Optimize tokenization and JSON serialization]
+**Learning:** Using `tiktoken.encode_ordinary()` instead of `encode()` provides a ~1.4x speedup for token counting by bypassing special token regex checks. Compact JSON serialization (`separators=(',', ':')`) reduces tool output payload size by ~35% and speeds up serialization by ~4x compared to indented JSON.
+**Action:** Implemented `encode_ordinary()` in `Message.get_token_count` and used compact JSON for tool results in `ChatEngine` and `ToolExecutionResult`.
