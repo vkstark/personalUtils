@@ -5,6 +5,7 @@ ToolExecutor - Safely execute utility tools
 Version 2.0: Returns structured ToolExecutionResult for all executions
 """
 
+import os
 import sys
 import json
 import socket
@@ -17,6 +18,19 @@ from urllib.parse import urlparse
 
 from .tool_result import ToolExecutionResult, ToolStatus
 
+# Cap captured subprocess stdout so a single tool call can't exhaust memory,
+# balloon the persisted 0600 history, or blow up OpenAI token spend.
+_MAX_OUTPUT_CHARS = 512 * 1024
+
+# Environment variable name-fragments to strip from the child process env
+# (least privilege: none of the utilities need the parent's credentials).
+_SENSITIVE_ENV_FRAGMENTS = ("API_KEY", "SECRET", "TOKEN", "PASSWORD", "PASSWD")
+
+# Secret files no tool should surface to the model. manage_env_files is the one
+# exception: it reads .env deliberately and redacts values with --hide-values.
+_SECRET_FILE_NAMES = {"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".netrc", ".pgpass"}
+_SECRET_FILE_SUFFIXES = (".pem", ".key", ".p12", ".pfx")
+
 
 def _is_blocked_ip(ip_str: str) -> bool:
     """True if the IP is loopback/link-local/private/reserved (SSRF targets)."""
@@ -28,6 +42,26 @@ def _is_blocked_ip(ip_str: str) -> bool:
         ip.is_loopback or ip.is_link_local or ip.is_private
         or ip.is_reserved or ip.is_multicast or ip.is_unspecified
     )
+
+
+def _is_secret_file(resolved: Path) -> bool:
+    """True if the path names a credentials/secrets file (.env, keys, etc.)."""
+    name = resolved.name
+    if name == ".env" or name.startswith(".env."):
+        return True
+    if name in _SECRET_FILE_NAMES:
+        return True
+    if resolved.suffix in _SECRET_FILE_SUFFIXES:
+        return True
+    return False
+
+
+def _child_env() -> Dict[str, str]:
+    """A copy of the environment with the parent's secrets removed."""
+    return {
+        k: v for k, v in os.environ.items()
+        if not any(frag in k.upper() for frag in _SENSITIVE_ENV_FRAGMENTS)
+    }
 
 
 class ToolExecutor:
@@ -124,7 +158,7 @@ class ToolExecutor:
         if _is_blocked_ip(host):
             return f"Refusing to call internal/private address: {host}"
         try:
-            resolved_ips = {info[4][0] for info in socket.getaddrinfo(host, None)}
+            resolved_ips = {str(info[4][0]) for info in socket.getaddrinfo(host, None)}
         except (socket.gaierror, OSError):
             return None  # let the subprocess surface DNS failures
         for ip in resolved_ips:
@@ -137,14 +171,28 @@ class ToolExecutor:
         for key in self._PATH_ARG_KEYS:
             value = args.get(key)
             if isinstance(value, str):
+                # A path that begins with '-' would be parsed as a flag by the
+                # child tool's argparse (argument injection); it is never a path
+                # a caller legitimately means.
+                if value.startswith("-"):
+                    return f"Path argument '{key}' may not start with '-': {value!r}"
                 err = self._check_path(value)
                 if err:
                     return err
+                # Don't let generic tools exfiltrate secret files. manage_env_files
+                # is exempt: it reads .env on purpose and redacts values.
+                if function_name != "manage_env_files":
+                    try:
+                        resolved = Path(value).resolve()
+                    except (OSError, ValueError):
+                        resolved = None
+                    if resolved is not None and _is_secret_file(resolved):
+                        return f"Refusing to expose secret file '{value}' via {function_name}"
         if function_name == "test_api_endpoint":
             return self._check_url(args.get("url"))
         return None
 
-    def execute(self, function_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    def execute(self, function_name: str, arguments: Dict[str, Any]) -> ToolExecutionResult:
         """
         Executes a specified tool with the given arguments.
 
@@ -157,8 +205,8 @@ class ToolExecutor:
             arguments (Dict[str, Any]): A dictionary of arguments for the function.
 
         Returns:
-            Dict[str, Any]: A dictionary containing the result of the execution.
-            It includes a "success" flag and either a "result" or "error" key.
+            ToolExecutionResult: The structured result of the execution. Use
+            `to_legacy_dict()` for the legacy success/result/error dict shape.
         """
 
         start_time = time.time()
@@ -425,20 +473,28 @@ class ToolExecutor:
                 text=True,
                 timeout=self.timeout,
                 check=False,
-                shell=False  # Explicitly disable shell for security
+                shell=False,  # Explicitly disable shell for security
+                env=_child_env(),  # least privilege: strip parent secrets
             )
 
             # Calculate final duration
             duration = time.time() - start_time
 
+            # Bound captured stdout before parsing/persisting it.
+            stdout = result.stdout or ""
+            if len(stdout) > _MAX_OUTPUT_CHARS:
+                stdout = (
+                    stdout[:_MAX_OUTPUT_CHARS]
+                    + f"\n... [truncated {len(result.stdout) - _MAX_OUTPUT_CHARS} chars]"
+                )
+
             # Try to parse structured payload from stdout
             structured_payload = None
-            if result.stdout:
-                try:
-                    structured_payload = json.loads(result.stdout)
-                except (json.JSONDecodeError, ValueError):
-                    # Not JSON, that's fine - stdout will be plain text
-                    pass
+            try:
+                structured_payload = json.loads(stdout)
+            except (json.JSONDecodeError, ValueError):
+                # Not JSON (or truncated) - stdout stays plain text
+                pass
 
             # Determine status based on exit code
             if result.returncode == 0:
@@ -461,7 +517,7 @@ class ToolExecutor:
 
             return ToolExecutionResult(
                 status=status,
-                stdout=result.stdout,
+                stdout=stdout,
                 stderr=result.stderr,
                 structured_payload=structured_payload,
                 duration=duration,

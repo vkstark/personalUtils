@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional, Callable
 
 from .tool_adapter import ToolAdapter
 from .tool_executor import ToolExecutor
+from .tool_result import ToolExecutionResult
 
 
 class ToolRegistry:
@@ -74,7 +75,7 @@ class ToolRegistry:
         """
         return self.tools
 
-    def execute_tool(self, function_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    def execute_tool(self, function_name: str, arguments: Dict[str, Any]) -> ToolExecutionResult:
         """
         Executes a tool by its function name with the given arguments.
 
@@ -83,7 +84,7 @@ class ToolRegistry:
             arguments (Dict[str, Any]): The arguments for the function.
 
         Returns:
-            Dict[str, Any]: The result of the tool's execution.
+            ToolExecutionResult: The structured result of the tool's execution.
         """
         return self.executor.execute(function_name, arguments)
 

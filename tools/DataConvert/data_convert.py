@@ -114,12 +114,19 @@ class DataConverter:
         else:
             raise ValueError(f"Unsupported format: {format}")
 
-    def write_file(self, data: Any, filepath: str, format: Optional[str] = None):
+    def write_file(self, data: Any, filepath: str, format: Optional[str] = None,
+                   overwrite: bool = False):
         """Write data to file in specified format"""
         if format is None:
             format = self.detect_format(filepath)
             if format is None:
                 raise ValueError(f"Cannot detect format for {filepath}")
+
+        # Don't silently clobber an existing file; require explicit --overwrite.
+        if not overwrite and os.path.exists(filepath):
+            raise ValueError(
+                f"Output file already exists: {filepath}. Pass --overwrite to replace it."
+            )
 
         print(self._colorize(f"Writing {format.upper()} file: {filepath}", Colors.CYAN))
 
@@ -313,7 +320,8 @@ class DataConverter:
 
     def convert(self, input_file: str, output_file: str,
                 input_format: Optional[str] = None,
-                output_format: Optional[str] = None):
+                output_format: Optional[str] = None,
+                overwrite: bool = False):
         """Convert file from one format to another"""
         # Read input
         data = self.read_file(input_file, input_format)
@@ -323,7 +331,7 @@ class DataConverter:
             self._validate_data(data, output_format or self.detect_format(output_file))
 
         # Write output
-        self.write_file(data, output_file, output_format)
+        self.write_file(data, output_file, output_format, overwrite=overwrite)
 
     def _validate_data(self, data: Any, format: str):
         """Validate data for target format"""
@@ -388,6 +396,8 @@ Examples:
                        help='Disable pretty printing/formatting')
     parser.add_argument('--no-validate', action='store_true',
                        help='Skip data validation')
+    parser.add_argument('--overwrite', action='store_true',
+                       help='Replace the output file if it already exists')
     parser.add_argument('--no-color', action='store_true',
                        help='Disable colored output')
 
@@ -413,7 +423,8 @@ Examples:
             args.input,
             args.output,
             args.input_format,
-            args.output_format
+            args.output_format,
+            overwrite=args.overwrite
         )
 
         if not args.no_color:

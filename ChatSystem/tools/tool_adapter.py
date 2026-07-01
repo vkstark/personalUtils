@@ -146,7 +146,7 @@ class ToolAdapter:
 
         "BulkRename": {
             "name": "bulk_rename_files",
-            "description": "Batch rename files using patterns, regex, or sequential numbering.",
+            "description": "Batch rename files using patterns, regex, or sequential numbering. Note: this requires interactive confirmation and cannot complete non-interactively here; calling it returns instructions to run the tool manually rather than renaming files.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -181,7 +181,7 @@ class ToolAdapter:
 
         "EnvManager": {
             "name": "manage_env_files",
-            "description": "Manage .env configuration files. Parse, validate, and switch between environments.",
+            "description": "Read .env configuration files. Only the read-only 'parse' action runs here (values are redacted); write/switch actions require interactive confirmation and return instructions to run the tool manually instead.",
             "parameters": {
                 "type": "object",
                 "properties": {

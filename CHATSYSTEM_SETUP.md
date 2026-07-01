@@ -40,6 +40,34 @@ python ChatSystem/examples/basic_chat.py
 python -m ChatSystem
 ```
 
+## 🔒 Security & Costs (read before first run)
+
+This is a local, single-user tool that lets an LLM drive real utilities on your
+machine. Understand what that means before pointing it at anything sensitive:
+
+- **File access.** Tools can read and write files **under the directory you launch
+  it from** (the sandbox is rooted at your current working directory). Paths outside
+  that root are rejected, and known secret files (`.env`, `*.pem`, `id_*`, `.netrc`)
+  are refused by the generic file tools — but everything else under the cwd is fair
+  game. **Run it from a dedicated scratch directory that contains no credentials.**
+- **Network access.** The API-tester tool can make outbound HTTP(S) requests. Requests
+  to private/loopback/link-local addresses and cloud-metadata IPs are blocked (including
+  across redirects), but any public host is allowed. Treat it like giving the model a
+  restricted `curl`.
+- **Cost.** Every message and tool round is a paid OpenAI API call. Long, tool-heavy
+  sessions cost more. Use `gpt-4o-mini` and watch `/stats`.
+- **Side effects.** Some tools change state (write files, store snippets). Destructive
+  ones require explicit confirmation: BulkRename and env writes are never executed
+  headlessly, DuplicateFinder deletion is a dry run unless you pass `--force`, and
+  DataConvert refuses to overwrite an existing file without `--overwrite`.
+
+**What is guaranteed:** subprocesses run with `shell=False` (no shell injection), path
+arguments are sandboxed to the cwd, secrets are stripped from the child environment,
+private-IP network targets are blocked, and conversation history is written `0600`.
+**What is not:** the model's judgment. A prompt injection in content you feed it (a
+transcript, a file) can still cause it to call tools you didn't intend within those
+limits, so don't run it against untrusted input on a machine that holds secrets.
+
 ## 🎯 First Steps
 
 Once in the chat, try these commands:

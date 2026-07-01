@@ -371,7 +371,7 @@ Begin every analysis by carefully reading the transcript multiple times, then pr
                 Defaults to 3.
         """
         self.chat_engine = chat_engine or ChatEngine()
-        self.settings = settings or Settings()
+        self.settings = settings or Settings()  # type: ignore[call-arg]  # key loaded from env
         self.max_iterations = max_iterations
         self.model = model
 

@@ -99,10 +99,11 @@ class TestIOOptimization:
             mock_tool_call2.function.arguments = "{}"
             mock_tool_call2.model_dump.return_value = {"id": "call2"}
 
-            # Mock OpenAI response for the follow-up call
+            # Mock OpenAI response for the follow-up call (no further tool calls)
             mock_completion = MagicMock()
             mock_completion.choices = [MagicMock()]
             mock_completion.choices[0].message.content = "Final response"
+            mock_completion.choices[0].message.tool_calls = None
             mock_completion.usage = None
             engine.client.chat.completions.create.return_value = mock_completion
 
@@ -168,10 +169,11 @@ class TestIOOptimization:
             mock_tool_call.function.arguments = "{}"
             mock_tool_call.model_dump.return_value = {"id": "call1"}
 
-            # Mock OpenAI response
+            # Mock OpenAI response (final: content, no further tool calls)
             mock_completion = MagicMock()
             mock_completion.choices = [MagicMock()]
             mock_completion.choices[0].message.content = "Final response"
+            mock_completion.choices[0].message.tool_calls = None
             mock_completion.usage = None
             engine.client.chat.completions.create.return_value = mock_completion
 

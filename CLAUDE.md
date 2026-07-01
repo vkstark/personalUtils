@@ -74,8 +74,9 @@ execute them and call the API again with the results appended → yield assistan
 - **Tools run in parallel** via a `ThreadPoolExecutor`, but only the subprocess call is threaded;
   results are collected in original order and metrics/history are mutated **sequentially on the main
   thread** to keep shared state race-free. Preserve this split if you touch `_handle_tool_calls`.
-- **Reasoning models are special-cased** via the `REASONING_MODELS` tuple (`o1`/`o3*`), checked with
-  `str.startswith(tuple)`. They use `max_completion_tokens` (not `max_tokens`) and reject `temperature`.
+- **Reasoning models are special-cased** via the `REASONING_MODELS` tuple (`o1`/`o3`/`o4`/`gpt-5`
+  prefixes), checked with `str.startswith(tuple)`. They use `max_completion_tokens` (not `max_tokens`)
+  and reject `temperature`.
 - Streaming reconstructs `tool_calls` from delta chunks manually, accumulating fragments in lists and
   `"".join()`-ing them (never `+=`) — this was an intentional O(N²) fix.
 
@@ -158,7 +159,8 @@ merge YAML over defaults and **are actually wired to runtime**:
 - `get_cli_config()` → CLI theme / `show_token_usage`. `Settings.tool_timeout_seconds` /
   `max_tool_call_depth` / `history_file` wire the previously-hardcoded knobs.
 
-Invalid model names are rejected by validation; `gpt-5` and the `o1`/`o3` family are treated as
+Invalid model names are rejected by validation (both `model_name` and per-agent `agents.<name>.model`,
+against the shared `VALID_MODELS` tuple); `gpt-5` and the `o1`/`o3`/`o4` families are treated as
 reasoning-style (no `temperature`, `max_completion_tokens`) via `ChatEngine.REASONING_MODELS`.
 
 ### Security model (local, single-user)
