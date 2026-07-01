@@ -69,7 +69,8 @@ class ChatCLI:
 **Powered by:** {self.settings.model_name}
 **Current Agent:** {current_agent_info.get('name', 'Unknown')}
 **Tools Available:** {len(self.tool_registry.tools)}
-**Context:** {self.settings.max_tokens:,} tokens
+**Context window:** {self.chat_engine.conversation.max_tokens:,} tokens
+**Max response:** {self.settings.max_tokens:,} tokens
 
 Type your message or try these commands:
 - `/help` - Show available commands

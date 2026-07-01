@@ -5,10 +5,13 @@ ChatEngine - OpenAI GPT integration with streaming and function calling
 
 import json
 import concurrent.futures
-from typing import Optional, Dict, Any, List, Iterator, Callable
+from typing import Optional, Dict, Any, List, Iterator, Callable, cast
 from openai import OpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
-from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall
+from openai.types.chat.chat_completion_message_tool_call import (
+    ChatCompletionMessageToolCall,
+    Function,
+)
 
 from .config import Settings, calculate_cost
 from .conversation import ConversationManager
@@ -17,9 +20,10 @@ from ..tools.tool_result import ToolExecutionResult
 
 
 class ChatEngine:
-    # Reasoning-style models (o1/o3 series and gpt-5) have different parameter
+    # Reasoning-style models (o-series and gpt-5) have different parameter
     # requirements: no `temperature`, and `max_completion_tokens` not `max_tokens`.
-    REASONING_MODELS = ("o1-preview", "o1-mini", "o3", "o3-mini", "gpt-5")
+    # Prefixes cover GA + dated variants (o1, o1-mini, o3, o3-mini, o4-mini, ...).
+    REASONING_MODELS = ("o1", "o3", "o4", "gpt-5")
 
     """
     The main engine for handling chat interactions with OpenAI's GPT models.
@@ -244,7 +248,7 @@ class ChatEngine:
         is_reasoning_model = model.startswith(self.REASONING_MODELS)
 
         # Prepare API call parameters
-        params = {
+        params: Dict[str, Any] = {
             "model": model,
             "messages": messages,
         }
@@ -286,8 +290,11 @@ class ChatEngine:
         message = response.choices[0].message
 
         if message.tool_calls:
+            # This engine only registers function tools, so the API can never
+            # return the custom-tool variant of the tool-call union here.
             tool_response = self._handle_tool_calls(
-                message.tool_calls, model, max_tokens, temperature,
+                cast(List[ChatCompletionMessageToolCall], message.tool_calls),
+                model, max_tokens, temperature,
                 assistant_content=message.content,
             )
             return tool_response, True  # Tool calls were handled
@@ -321,7 +328,7 @@ class ChatEngine:
         is_reasoning_model = model.startswith(self.REASONING_MODELS)
 
         # Prepare API call parameters
-        params = {
+        params: Dict[str, Any] = {
             "model": model,
             "messages": messages,
             "stream": True,
@@ -348,12 +355,11 @@ class ChatEngine:
         stream = self.client.chat.completions.create(**params)
 
         # Collect streamed response
-        tool_calls = []
+        tool_calls: List[Dict[str, Any]] = []
         content_parts = []
 
+        chunk: ChatCompletionChunk
         for chunk in stream:
-            chunk: ChatCompletionChunk
-
             if not chunk.choices:
                 continue
 
@@ -375,25 +381,26 @@ class ChatEngine:
                             "function": {"name": "", "arguments": []}
                         })
 
-                    if tc.function.name:
-                        tool_calls[tc.index]["function"]["name"] = tc.function.name
+                    if tc.function is not None:
+                        if tc.function.name:
+                            tool_calls[tc.index]["function"]["name"] = tc.function.name
 
-                    if tc.function.arguments:
-                        tool_calls[tc.index]["function"]["arguments"].append(tc.function.arguments)
+                        if tc.function.arguments:
+                            tool_calls[tc.index]["function"]["arguments"].append(tc.function.arguments)
 
         # Handle tool calls if present
         if tool_calls:
             # Convert to proper format
             formatted_tool_calls = []
-            for tc in tool_calls:
+            for call in tool_calls:
                 formatted_tool_calls.append(
                     ChatCompletionMessageToolCall(
-                        id=tc["id"],
-                        type=tc["type"],
-                        function={
-                            "name": tc["function"]["name"],
-                            "arguments": "".join(tc["function"]["arguments"])
-                        }
+                        id=call["id"],
+                        type=call["type"],
+                        function=Function(
+                            name=call["function"]["name"],
+                            arguments="".join(call["function"]["arguments"]),
+                        )
                     )
                 )
 
@@ -428,7 +435,9 @@ class ChatEngine:
             )
             return {"error": error_msg}
 
-        # 2. Execute tool (blocking call)
+        # 2. Execute tool (blocking call). Callers only reach this after
+        # _handle_tool_calls verified an executor is registered.
+        assert self.tool_executor is not None
         try:
             result: ToolExecutionResult = self.tool_executor(function_name, function_args)
         except Exception as e:
@@ -501,12 +510,13 @@ class ChatEngine:
                     with concurrent.futures.ThreadPoolExecutor() as executor:
                         # Submit only the tool execution itself to threads
                         # Parsing and state updates remain in main thread for safety
-                        futures_map = {}
+                        futures_map: Dict[str, Optional[concurrent.futures.Future]] = {}
                         for tc in tool_calls:
                             try:
                                 args = json.loads(tc.function.arguments)
-                                future = executor.submit(self.tool_executor, tc.function.name, args)
-                                futures_map[tc.id] = future
+                                futures_map[tc.id] = executor.submit(
+                                    self.tool_executor, tc.function.name, args
+                                )
                             except json.JSONDecodeError:
                                 futures_map[tc.id] = None # Will be handled during sequential collection
 
@@ -557,7 +567,7 @@ class ChatEngine:
             is_reasoning_model = model.startswith(self.REASONING_MODELS)
 
             # Prepare params for tool call response
-            tool_params = {
+            tool_params: Dict[str, Any] = {
                 "model": model,
                 "messages": messages,
             }
@@ -571,6 +581,13 @@ class ChatEngine:
                 tool_params["max_completion_tokens"] = max_tokens
             else:
                 tool_params["max_tokens"] = max_tokens
+
+            # Offer the tools again so the model can chain a dependent second
+            # round. Runaway loops are bounded by tool_call_depth vs
+            # max_tool_call_depth, enforced at the top of this method on re-entry.
+            if self.tools and self.settings.enable_tools:
+                tool_params["tools"] = self.tools
+                tool_params["parallel_tool_calls"] = self.settings.parallel_tool_calls
 
             response: ChatCompletion = self.client.chat.completions.create(**tool_params)
 
@@ -586,8 +603,17 @@ class ChatEngine:
                 )
                 self.stats["total_cost"] += cost
 
+            # If the model asked for more tools, execute another round (bounded).
+            followup_message = response.choices[0].message
+            if followup_message.tool_calls:
+                return self._handle_tool_calls(
+                    cast(List[ChatCompletionMessageToolCall], followup_message.tool_calls),
+                    model, max_tokens, temperature,
+                    assistant_content=followup_message.content,
+                )
+
             # Add the final response to conversation
-            final_content = response.choices[0].message.content or ""
+            final_content = followup_message.content or ""
             if final_content:
                 self.conversation.add_message(role="assistant", content=final_content)
 

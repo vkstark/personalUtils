@@ -272,3 +272,46 @@ class TestRequestMethods:
 
         assert result['success'] is True
         assert result['status'] == 204
+
+
+class TestAPITesterSSRF:
+    """Transport-layer SSRF defenses inside the tool itself (hermetic: IP
+    literals / localhost, no outbound network)."""
+
+    @pytest.fixture
+    def tester(self, temp_dir):
+        t = APITester(colors=False)
+        t.history_file = temp_dir / '.api_tester_history.json'
+        return t
+
+    def test_non_http_scheme_rejected(self, tester):
+        result = tester.request('file:///etc/passwd')
+        assert result['success'] is False
+        assert 'http/https' in result['error']
+
+    def test_loopback_rejected(self, tester):
+        result = tester.request('http://127.0.0.1:9/')
+        assert result['success'] is False
+        assert 'blocked' in result['error'].lower()
+
+    def test_link_local_metadata_rejected(self, tester):
+        result = tester.request('http://169.254.169.254/latest/meta-data/')
+        assert result['success'] is False
+        assert 'blocked' in result['error'].lower()
+
+    def test_ip_block_helper(self):
+        from tools.APITester import api_tester as A
+        assert A._ip_is_blocked('127.0.0.1')
+        assert A._ip_is_blocked('10.0.0.1')
+        assert A._ip_is_blocked('169.254.169.254')
+        assert A._ip_is_blocked('::1')
+        assert not A._ip_is_blocked('93.184.216.34')
+
+    def test_redirect_handler_rejects_non_http_scheme(self):
+        from tools.APITester import api_tester as A
+        handler = A._ValidatingRedirectHandler()
+        with pytest.raises(A.SSRFError):
+            handler.redirect_request(
+                MagicMock(), MagicMock(), 302, "Found", {},
+                "file:///etc/passwd",
+            )

@@ -8,7 +8,7 @@ import json
 import tiktoken
 import contextlib
 import collections
-from typing import List, Dict, Any, Optional, Literal, TYPE_CHECKING
+from typing import DefaultDict, List, Dict, Any, Optional, Literal, TYPE_CHECKING
 from datetime import datetime, timezone
 from pathlib import Path
 from pydantic import BaseModel, Field, TypeAdapter
@@ -85,7 +85,7 @@ class Message(BaseModel):
             Dict[str, Any]: A dictionary representing the message in the format
             expected by the OpenAI API.
         """
-        msg = {"role": self.role}
+        msg: Dict[str, Any] = {"role": self.role}
 
         if self.content is not None:
             msg["content"] = self.content
@@ -153,7 +153,7 @@ class ConversationManager:
         self.summarize_threshold = summarize_threshold
         self.summarize_target_ratio = summarize_target_ratio
         self._total_tokens = 0
-        self._role_counts = collections.defaultdict(int)
+        self._role_counts: DefaultDict[str, int] = collections.defaultdict(int)
         self._batch_save_count = 0
         self._needs_save = False
         self._cached_openai_messages: Optional[List[Dict[str, Any]]] = None
@@ -225,7 +225,7 @@ class ConversationManager:
 7. **FileDiff** - Compare and diff files
 8. **GitStats** - Analyze git repository statistics
 9. **ImportOptimizer** - Optimize Python imports
-10. **PathSketch** - Path manipulation utilities
+10. **PathSketch** - Visualize directory tree structure
 11. **TodoExtractor** - Extract TODO comments from code
 12. **DataConvert** - Convert between data formats
 
@@ -412,6 +412,16 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             self._role_counts[msg_to_remove.role] -= 1
             num_to_remove += 1
 
+        # Don't leave the kept history starting with orphaned tool messages
+        # (a role=="tool" with no preceding assistant tool_calls is rejected by
+        # the API). Drop any leading tool messages too.
+        while (num_to_remove < len(other_messages) - 1
+               and other_messages[num_to_remove].role == "tool"):
+            msg_to_remove = other_messages[num_to_remove]
+            current_tokens -= msg_to_remove.get_token_count(self.encoding)
+            self._role_counts[msg_to_remove.role] -= 1
+            num_to_remove += 1
+
         if num_to_remove > 0:
             self.messages = system_messages + other_messages[num_to_remove:]
             self._invalidate_cache()
@@ -520,9 +530,14 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
 
             # Bolt: Optimize dumped cache by reusing raw loaded data for the new part
             # This avoids redundant model_dump calls on the entire history
+            # Dump the validated Message objects (not the raw dicts) for the
+            # loaded slice, so the cached-dump token counts match what
+            # get_token_count just computed rather than whatever was on disk.
             existing_count = len(self.messages) - len(new_messages)
             existing_dumped = [msg.model_dump(mode='json') for msg in self.messages[:existing_count]]
-            self._cached_dumped_messages = existing_dumped + raw_messages
+            self._cached_dumped_messages = existing_dumped + [
+                msg.model_dump(mode='json') for msg in new_messages
+            ]
 
         except Exception as e:
             print(f"Warning: Could not load history: {e}")
@@ -542,24 +557,32 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         Raises:
             ValueError: If an unsupported format is specified.
         """
+        # Exports carry the same conversation content as the history file, so
+        # create them 0600 too rather than at the umask default.
         if format == "json":
             if self._cached_dumped_messages is None:
                 self._cached_dumped_messages = [
                     msg.model_dump(mode='json') for msg in self.messages
                 ]
-            with open(filepath, "w", encoding="utf-8") as f:
+            with self._open_private_write(filepath) as f:
                 json.dump(
                     self._cached_dumped_messages,
                     f,
                     indent=2,
                 )
         elif format == "text":
-            with open(filepath, "w", encoding="utf-8") as f:
+            with self._open_private_write(filepath) as f:
                 for msg in self.messages:
                     f.write(f"[{msg.role.upper()}] {msg.timestamp}\n")
                     f.write(f"{msg.content}\n\n")
         else:
             raise ValueError(f"Unsupported format: {format}")
+
+    @staticmethod
+    def _open_private_write(filepath: str):
+        """Open a file for writing with owner-only (0600) permissions."""
+        fd = os.open(filepath, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+        return os.fdopen(fd, "w", encoding="utf-8")
 
     def get_summary(self) -> Dict[str, Any]:
         """
@@ -600,6 +623,18 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             if self._batch_save_count == 0 and self._needs_save:
                 self._save_history()
 
+    @staticmethod
+    def _keep_count_without_orphan_tools(other_messages: List['Message'], keep_recent_count: int) -> int:
+        """Grow keep_recent_count until the kept slice doesn't start on a tool msg.
+
+        Keeps an assistant(tool_calls) message together with its tool responses so
+        the post-summary history never leads with an orphaned role=="tool" message.
+        """
+        total = len(other_messages)
+        while keep_recent_count < total and other_messages[-keep_recent_count].role == "tool":
+            keep_recent_count += 1
+        return keep_recent_count
+
     def summarize_conversation(self, chat_engine: Optional['ChatEngine'] = None, target_ratio: float = 0.5) -> str:
         """
         Summarize the conversation to reduce token usage.
@@ -633,6 +668,10 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         keep_fraction = min(0.9, max(0.1, target_ratio))
         keep_recent_count = max(3, int(len(other_messages) * keep_fraction))
         keep_recent_count = min(keep_recent_count, len(other_messages) - 1)
+        # Never split an assistant(tool_calls) group from its tool responses: a
+        # kept history that starts with a role=="tool" message is rejected by the
+        # OpenAI API. Move the boundary back to include the owning assistant msg.
+        keep_recent_count = self._keep_count_without_orphan_tools(other_messages, keep_recent_count)
         messages_to_summarize = other_messages[:-keep_recent_count]
         messages_to_keep = other_messages[-keep_recent_count:]
 
@@ -708,7 +747,7 @@ Provide a concise summary in 3-5 paragraphs that captures:
         summary_lines.append(f"Summarized {len(messages)} messages:")
 
         # Count by role
-        role_counts = {}
+        role_counts: Dict[str, int] = {}
         for msg in messages:
             role_counts[msg.role] = role_counts.get(msg.role, 0) + 1
 

@@ -107,7 +107,7 @@ class AgentManager:
             settings (Optional[Settings], optional): An instance of the Settings
                 class. If None, default settings are loaded. Defaults to None.
         """
-        self.settings = settings or Settings()
+        self.settings = settings or Settings()  # type: ignore[call-arg]  # key loaded from env
         self.agents: Dict[AgentType, Any] = {}
         self.current_agent_type: Optional[AgentType] = None
         self.current_agent: Optional[Any] = None
@@ -134,8 +134,12 @@ class AgentManager:
             agent.chat_engine = chat_engine
 
             # Re-add the system persona to the new chat engine's conversation
-            # This is critical because the new engine has a fresh conversation without the persona
-            if hasattr(agent, 'SYSTEM_PERSONA'):
+            # This is critical because the new engine has a fresh conversation without the persona.
+            # Prefer get_formatted_persona() so placeholders (e.g. AgentExecutor's
+            # {tools}) are substituted exactly as they are at construction time.
+            if hasattr(agent, 'get_formatted_persona'):
+                agent.chat_engine.conversation.add_message("system", agent.get_formatted_persona())
+            elif hasattr(agent, 'SYSTEM_PERSONA'):
                 agent.chat_engine.conversation.add_message("system", agent.SYSTEM_PERSONA)
 
             return agent
@@ -257,17 +261,19 @@ class AgentManager:
             for agent_type, info in self.AGENT_DESCRIPTIONS.items()
         }
 
-    def get_agent_info(self, agent_type: AgentType) -> Dict[str, Any]:
+    def get_agent_info(self, agent_type: Optional[AgentType]) -> Dict[str, Any]:
         """
         Gets the descriptive information for a specific agent type.
 
         Args:
-            agent_type (AgentType): The type of the agent.
+            agent_type (Optional[AgentType]): The type of the agent.
 
         Returns:
             Dict[str, Any]: A dictionary containing the agent's information,
             or an empty dictionary if the agent type is not found.
         """
+        if agent_type is None:
+            return {}
         return self.AGENT_DESCRIPTIONS.get(agent_type, {})
 
     @staticmethod

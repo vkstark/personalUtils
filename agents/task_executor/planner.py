@@ -171,7 +171,7 @@ Important:
         Returns:
             List of TaskStep objects
         """
-        steps = []
+        steps: List[TaskStep] = []
 
         try:
             # Try to extract JSON from response

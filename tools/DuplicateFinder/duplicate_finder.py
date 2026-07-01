@@ -374,6 +374,9 @@ Examples:
                        help='Which file to keep when deleting (default: first)')
     parser.add_argument('--dry-run', action='store_true',
                        help='Show what would be deleted without deleting')
+    parser.add_argument('--force', '--yes', action='store_true', dest='force',
+                       help='Actually delete. Without this, --delete only previews '
+                            '(dry run) so files are never removed unintentionally.')
     parser.add_argument('-i', '--interactive', action='store_true',
                        help='Ask before deleting each file')
 
@@ -398,7 +401,7 @@ Examples:
             empty = finder.find_empty(args.paths, args.recursive, args.exclude_dirs)
 
             if empty:
-                print(self._colorize(f"\nFound {len(empty)} empty file(s):", Colors.YELLOW))
+                print(finder._colorize(f"\nFound {len(empty)} empty file(s):", Colors.YELLOW))
                 for filepath in empty:
                     print(f"  {filepath}")
             else:
@@ -420,14 +423,20 @@ Examples:
         print(finder.format_duplicates(duplicates, args.show_hash))
         print(finder.get_stats())
 
-        # Delete if requested
+        # Delete if requested. --delete is a dry run unless --force is given, so
+        # duplicates are never removed without an explicit confirmation flag.
         if args.delete and duplicates:
             print()
+            effective_dry_run = args.dry_run or not args.force
+            if effective_dry_run and not args.dry_run:
+                print(finder._colorize(
+                    "Dry run (no --force): showing what would be deleted. "
+                    "Re-run with --force to actually delete.", Colors.YELLOW))
             deleted = finder.delete_duplicates(duplicates, args.keep,
-                                              args.dry_run or not args.delete,
+                                              effective_dry_run,
                                               args.interactive)
 
-            if not args.dry_run:
+            if not effective_dry_run:
                 print(f"\n{finder._colorize('✓', Colors.GREEN)} Deleted {deleted} file(s)")
 
     except KeyboardInterrupt:

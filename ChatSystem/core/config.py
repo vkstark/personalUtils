@@ -11,6 +11,13 @@ from pydantic import Field, field_validator, PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
+# Single source of truth for accepted model ids (chat default + per-agent overrides).
+VALID_MODELS = (
+    "gpt-4o", "gpt-4o-mini", "gpt-4.1",
+    "gpt-4.1-mini", "gpt-4.1-nano",
+    "o3-mini", "o3", "gpt-5",
+)
+
 
 class Settings(BaseSettings):
     """
@@ -66,7 +73,7 @@ class Settings(BaseSettings):
     # Config file path
     config_yaml_path: str = Field(default="config.yaml")
 
-    _yaml_cache: Dict[str, Any] = PrivateAttr(default=None)
+    _yaml_cache: Optional[Dict[str, Any]] = PrivateAttr(default=None)
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -90,13 +97,8 @@ class Settings(BaseSettings):
         Raises:
             ValueError: If the model name is not in the list of valid models.
         """
-        valid_models = [
-            "gpt-4o", "gpt-4o-mini", "gpt-4.1",
-            "gpt-4.1-mini", "gpt-4.1-nano",
-            "o3-mini", "o3", "gpt-5"
-        ]
-        if v not in valid_models:
-            raise ValueError(f"Model must be one of: {', '.join(valid_models)}")
+        if v not in VALID_MODELS:
+            raise ValueError(f"Model must be one of: {', '.join(VALID_MODELS)}")
         return v
 
     @field_validator("log_level")
@@ -199,8 +201,6 @@ class Settings(BaseSettings):
         return {
             "max_iterations": agent_config.get("max_iterations", self.max_agent_iterations),
             "enable_planning": agent_config.get("enable_planning", self.enable_planning),
-            "enable_reasoning": agent_config.get("enable_reasoning", True),
-            "timeout_seconds": agent_config.get("timeout_seconds", 300),
             "default_agent": agent_config.get("default_agent", "task_executor"),
         }
 
@@ -218,15 +218,16 @@ class Settings(BaseSettings):
         """
         base = self.get_agent_config()
         agent = self.load_yaml_config().get("agents", {}).get(agent_name, {})
+        model = agent.get("model")
+        if model is not None and model not in VALID_MODELS:
+            raise ValueError(
+                f"agents.{agent_name}.model '{model}' is not a supported model: "
+                f"{', '.join(VALID_MODELS)}"
+            )
         return {
             "max_iterations": agent.get("max_iterations", base["max_iterations"]),
             "enable_planning": agent.get("enable_planning", base["enable_planning"]),
-            "enable_reasoning": agent.get("enable_reasoning", base["enable_reasoning"]),
-            "model": agent.get("model"),
-            "timeout_seconds": agent.get("timeout_seconds", base["timeout_seconds"]),
-            "persist_reasoning": agent.get("persist_reasoning", True),
-            "auto_summarize": agent.get("auto_summarize", True),
-            "summarize_threshold": agent.get("summarize_threshold", 0.85),
+            "model": model,
         }
 
     def get_conversation_config(self) -> Dict[str, Any]:
@@ -273,7 +274,8 @@ def get_settings() -> Settings:
     Returns:
         Settings: The cached instance of the application settings.
     """
-    return Settings()
+    # openai_api_key is populated from the environment / .env by pydantic-settings.
+    return Settings()  # type: ignore[call-arg]
 
 
 # Model pricing information (per 1M tokens)
