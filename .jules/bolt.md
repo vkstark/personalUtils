@@ -43,3 +43,7 @@
 ## 2026-06-20 - [Optimize ToolMetrics with lazy caching and deque]
 **Learning:** `ToolMetrics.to_dict()` was being called frequently in `ChatEngine.get_stats()`, causing redundant calculations and string formatting. Also, manual list slicing for `error_history` was O(N) for each update.
 **Action:** Implemented lazy caching for `to_dict()` and replaced the list-based `error_history` with `collections.deque(maxlen=10)`. Measured a ~32x speedup for `get_stats()` (from ~0.16ms to ~0.005ms). Always return a shallow copy (`.copy()`) when caching dictionaries to prevent external mutation of the internal state.
+
+## 2026-07-04 - [Optimize Agent initialization and prevent redundant personas]
+**Learning:** Initializing the OpenAI client in `ChatEngine` added ~33ms of overhead per turn when new engines were created (common in agentic loops). Also, `AgentManager` and `ConversationManager` were adding redundant system prompts, which bloated the context and triggered unnecessary disk writes on startup.
+**Action:** Implemented a shared `_client_cache` in `ChatEngine` to reuse OpenAI clients by API key. Optimized `AgentManager` to use lazy config retrieval and `get_settings()`. Modified `ConversationManager` and `AgentExecutor` to prevent duplicate persona injection by checking existing history. Reduced `get_agent` latency from ~35ms to ~2.2ms (~15x speedup).

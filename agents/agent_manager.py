@@ -107,7 +107,8 @@ class AgentManager:
             settings (Optional[Settings], optional): An instance of the Settings
                 class. If None, default settings are loaded. Defaults to None.
         """
-        self.settings = settings or Settings()  # type: ignore[call-arg]  # key loaded from env
+        from ChatSystem.core.config import get_settings
+        self.settings = settings or get_settings()
         self.agents: Dict[AgentType, Any] = {}
         self.current_agent_type: Optional[AgentType] = None
         self.current_agent: Optional[Any] = None
@@ -137,10 +138,15 @@ class AgentManager:
             # This is critical because the new engine has a fresh conversation without the persona.
             # Prefer get_formatted_persona() so placeholders (e.g. AgentExecutor's
             # {tools}) are substituted exactly as they are at construction time.
+            persona = None
             if hasattr(agent, 'get_formatted_persona'):
-                agent.chat_engine.conversation.add_message("system", agent.get_formatted_persona())
+                persona = agent.get_formatted_persona()
             elif hasattr(agent, 'SYSTEM_PERSONA'):
-                agent.chat_engine.conversation.add_message("system", agent.SYSTEM_PERSONA)
+                persona = agent.SYSTEM_PERSONA
+
+            if persona and not any(m.role == "system" and m.content == persona
+                                   for m in agent.chat_engine.conversation.messages):
+                agent.chat_engine.conversation.add_message("system", persona)
 
             return agent
 
@@ -151,46 +157,44 @@ class AgentManager:
         # Create new agent based on type
         chat_engine = chat_engine or ChatEngine()
 
-        # Resolve per-agent configuration (model, flags, iterations) from YAML,
-        # merging each agents.<name> block over the general agent defaults.
-        executor_cfg = self.settings.get_agent_config_for("task_executor")
-        analyzer_cfg = self.settings.get_agent_config_for("transcript_analyzer")
-        futurist_cfg = self.settings.get_agent_config_for("trillionaire_futurist")
-        teacher_cfg = self.settings.get_agent_config_for("framework_teacher")
-
-        agent_map = {
-            AgentType.TASK_EXECUTOR: lambda: AgentExecutor(
+        # Resolve per-agent configuration (model, flags, iterations) from YAML lazily
+        if agent_type == AgentType.TASK_EXECUTOR:
+            cfg = self.settings.get_agent_config_for("task_executor")
+            agent = AgentExecutor(
                 chat_engine=chat_engine,
                 settings=self.settings,
-                max_iterations=executor_cfg["max_iterations"],
-                enable_planning=executor_cfg["enable_planning"],
-                model=executor_cfg["model"],
-            ),
-            AgentType.TRANSCRIPT_ANALYZER: lambda: TranscriptAnalyzer(
-                chat_engine=chat_engine,
-                settings=self.settings,
-                max_iterations=analyzer_cfg["max_iterations"],
-                model=analyzer_cfg["model"],
-            ),
-            AgentType.TRILLIONAIRE_FUTURIST: lambda: TrillionaireFuturist(
-                chat_engine=chat_engine,
-                settings=self.settings,
-                max_iterations=futurist_cfg["max_iterations"],
-                model=futurist_cfg["model"],
-            ),
-            AgentType.FRAMEWORK_TEACHER: lambda: FrameworkTeacher(
-                chat_engine=chat_engine,
-                settings=self.settings,
-                max_iterations=teacher_cfg["max_iterations"],
-                model=teacher_cfg["model"],
+                max_iterations=cfg["max_iterations"],
+                enable_planning=cfg["enable_planning"],
+                model=cfg["model"],
             )
-        }
-
-        if agent_type not in agent_map:
+        elif agent_type == AgentType.TRANSCRIPT_ANALYZER:
+            cfg = self.settings.get_agent_config_for("transcript_analyzer")
+            agent = TranscriptAnalyzer(
+                chat_engine=chat_engine,
+                settings=self.settings,
+                max_iterations=cfg["max_iterations"],
+                model=cfg["model"],
+            )
+        elif agent_type == AgentType.TRILLIONAIRE_FUTURIST:
+            cfg = self.settings.get_agent_config_for("trillionaire_futurist")
+            agent = TrillionaireFuturist(
+                chat_engine=chat_engine,
+                settings=self.settings,
+                max_iterations=cfg["max_iterations"],
+                model=cfg["model"],
+            )
+        elif agent_type == AgentType.FRAMEWORK_TEACHER:
+            cfg = self.settings.get_agent_config_for("framework_teacher")
+            agent = FrameworkTeacher(
+                chat_engine=chat_engine,
+                settings=self.settings,
+                max_iterations=cfg["max_iterations"],
+                model=cfg["model"],
+            )
+        else:
             raise ValueError(f"Unknown agent type: {agent_type}")
 
-        # Create and cache the agent
-        agent = agent_map[agent_type]()
+        # Cache and return the agent
         self.agents[agent_type] = agent
         return agent
 

@@ -181,14 +181,16 @@ class ConversationManager:
             # Fallback for unknown/unsupported models - use latest encoding
             self.encoding = tiktoken.get_encoding("o200k_base")
 
-        # Add system prompt if provided
+        # Defer default system prompt if history will be loaded
+        history_exists = self.auto_save and self.history_file.exists()
+
         if system_prompt:
             self.add_message(role="system", content=system_prompt)
-        else:
+        elif not history_exists:
             self._add_default_system_prompt()
 
         # Load previous history if available
-        if self.auto_save and self.history_file.exists():
+        if history_exists:
             self._load_history()
 
     def _reset_state(self):

@@ -59,6 +59,7 @@ class TestIOOptimization:
         """Test that _handle_tool_calls uses batching to reduce writes"""
         # Mock settings and OpenAI client
         mock_settings = MagicMock()
+        mock_settings.openai_api_key = "test-key"
         mock_settings.model_name = "gpt-4o"
         mock_settings.max_tokens = 4096
         mock_settings.parallel_tool_calls = True
@@ -75,6 +76,8 @@ class TestIOOptimization:
         with patch('ChatSystem.core.chat_engine.OpenAI'), \
              patch('ChatSystem.core.chat_engine.ConversationManager', return_value=mock_conv):
 
+            # Clear cache to avoid interference
+            ChatEngine._client_cache = {}
             engine = ChatEngine(settings=mock_settings)
 
             # Setup tool executor
@@ -110,30 +113,15 @@ class TestIOOptimization:
             # Call _handle_tool_calls
             engine._handle_tool_calls([mock_tool_call1, mock_tool_call2], "gpt-4o", 4096, 0.7)
 
-            # Check that _save_history was NOT called multiple times during the batch
-            # We can check that add_message was called 3 times (1 assistant + 2 tool results)
-            # but _save_history should only be called once if we used batching correctly.
-
-            # Since mock_conv._save_history is a mock, it will be called by mock_conv.add_message
-            # but because of our implementation, it will return early if _batch_save_count > 0.
-
-            # Count how many times _save_history was called when _batch_save_count was 0
-            # Wait, our batch_saves implementation in ConversationManager calls _save_history
-            # at the end.
-
             # Let's verify batch_saves was indeed called
             assert mock_conv.add_message.call_count >= 3
-
-            # Verify that _save_history was only effectively called when _batch_save_count was 0
-            # This is hard to test with a pure MagicMock for the whole object.
-            # Let's use a real ConversationManager with a mocked _save_history.
 
     def test_real_integration_batch_count(self, tmp_path):
         """Real integration test for batch count in ChatEngine"""
         history_file = tmp_path / "test_history.json"
 
         mock_settings = MagicMock()
-        mock_settings.openai_api_key = "test-key"
+        mock_settings.openai_api_key = "test-key-2"
         mock_settings.model_name = "gpt-4o"
         mock_settings.max_tokens = 4096
         mock_settings.parallel_tool_calls = True
@@ -151,6 +139,8 @@ class TestIOOptimization:
             # Reset after init system prompt
             mock_dump.reset_mock()
 
+            # Clear cache
+            ChatEngine._client_cache = {}
             engine = ChatEngine(settings=mock_settings, conversation=conv)
 
             # Mock tool executor
@@ -175,6 +165,7 @@ class TestIOOptimization:
             mock_completion.choices[0].message.content = "Final response"
             mock_completion.choices[0].message.tool_calls = None
             mock_completion.usage = None
+
             engine.client.chat.completions.create.return_value = mock_completion
 
             # Call _handle_tool_calls
@@ -187,8 +178,6 @@ class TestIOOptimization:
             # 4. Final assistant message added -> _save_history called (not batched)
 
             # Total ACTUAL writes should be 2 (one for the batch, one for the final assistant response)
-            # Without batching it would be 3 (assistant tool call, tool result, final assistant response)
-
             assert mock_dump.call_count == 2
 
 if __name__ == "__main__":
