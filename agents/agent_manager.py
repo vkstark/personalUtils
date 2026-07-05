@@ -107,7 +107,8 @@ class AgentManager:
             settings (Optional[Settings], optional): An instance of the Settings
                 class. If None, default settings are loaded. Defaults to None.
         """
-        self.settings = settings or Settings()  # type: ignore[call-arg]  # key loaded from env
+        from ChatSystem.core.config import get_settings
+        self.settings = settings or get_settings()
         self.agents: Dict[AgentType, Any] = {}
         self.current_agent_type: Optional[AgentType] = None
         self.current_agent: Optional[Any] = None
@@ -149,40 +150,38 @@ class AgentManager:
             return self.agents[agent_type]
 
         # Create new agent based on type
-        chat_engine = chat_engine or ChatEngine()
+        chat_engine = chat_engine or ChatEngine(settings=self.settings)
 
-        # Resolve per-agent configuration (model, flags, iterations) from YAML,
-        # merging each agents.<name> block over the general agent defaults.
-        executor_cfg = self.settings.get_agent_config_for("task_executor")
-        analyzer_cfg = self.settings.get_agent_config_for("transcript_analyzer")
-        futurist_cfg = self.settings.get_agent_config_for("trillionaire_futurist")
-        teacher_cfg = self.settings.get_agent_config_for("framework_teacher")
+        # Bolt: Optimize by only fetching the configuration for the requested agent_type.
+        # This eliminates O(N) overhead where N is the number of agent types.
+        def _get_cfg():
+            return self.settings.get_agent_config_for(agent_type.value)
 
         agent_map = {
             AgentType.TASK_EXECUTOR: lambda: AgentExecutor(
                 chat_engine=chat_engine,
                 settings=self.settings,
-                max_iterations=executor_cfg["max_iterations"],
-                enable_planning=executor_cfg["enable_planning"],
-                model=executor_cfg["model"],
+                max_iterations=_get_cfg()["max_iterations"],
+                enable_planning=_get_cfg()["enable_planning"],
+                model=_get_cfg()["model"],
             ),
             AgentType.TRANSCRIPT_ANALYZER: lambda: TranscriptAnalyzer(
                 chat_engine=chat_engine,
                 settings=self.settings,
-                max_iterations=analyzer_cfg["max_iterations"],
-                model=analyzer_cfg["model"],
+                max_iterations=_get_cfg()["max_iterations"],
+                model=_get_cfg()["model"],
             ),
             AgentType.TRILLIONAIRE_FUTURIST: lambda: TrillionaireFuturist(
                 chat_engine=chat_engine,
                 settings=self.settings,
-                max_iterations=futurist_cfg["max_iterations"],
-                model=futurist_cfg["model"],
+                max_iterations=_get_cfg()["max_iterations"],
+                model=_get_cfg()["model"],
             ),
             AgentType.FRAMEWORK_TEACHER: lambda: FrameworkTeacher(
                 chat_engine=chat_engine,
                 settings=self.settings,
-                max_iterations=teacher_cfg["max_iterations"],
-                model=teacher_cfg["model"],
+                max_iterations=_get_cfg()["max_iterations"],
+                model=_get_cfg()["model"],
             )
         }
 

@@ -19,6 +19,13 @@ from ChatSystem.tools.tool_result import ToolExecutionResult, ToolStatus
 class TestIOOptimization:
     """Test disk I/O optimization"""
 
+    @pytest.fixture(autouse=True)
+    def clear_client_cache(self):
+        """Ensure ChatEngine._client_cache is cleared before each test."""
+        ChatEngine._client_cache.clear()
+        yield
+        ChatEngine._client_cache.clear()
+
     def test_batch_saves_reduces_writes(self, tmp_path):
         """Test that batch_saves reduces the number of disk writes"""
         history_file = tmp_path / "test_history.json"

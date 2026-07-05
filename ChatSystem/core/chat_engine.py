@@ -25,6 +25,9 @@ class ChatEngine:
     # Prefixes cover GA + dated variants (o1, o1-mini, o3, o3-mini, o4-mini, ...).
     REASONING_MODELS = ("o1", "o3", "o4", "gpt-5")
 
+    # Shared client cache to avoid redundant OpenAI client initialization (~33ms per call)
+    _client_cache: Dict[str, OpenAI] = {}
+
     """
     The main engine for handling chat interactions with OpenAI's GPT models.
 
@@ -63,7 +66,17 @@ class ChatEngine:
         from .config import get_settings
 
         self.settings = settings or get_settings()
-        self.client = OpenAI(api_key=self.settings.openai_api_key)
+
+        # Bolt: Use shared client cache to avoid redundant initialization overhead (~33ms)
+        api_key = self.settings.openai_api_key
+        # Check for existence of the client in the cache first.
+        # Tests that mock OpenAI must clear this cache or use distinct keys.
+        cached_client = self._client_cache.get(api_key)
+        if cached_client is not None:
+            self.client = cached_client
+        else:
+            self.client = OpenAI(api_key=api_key)
+            self._client_cache[api_key] = self.client
 
         # Initialize conversation manager from the conversation config block.
         # NOTE: the context window is `max_tokens_default` (e.g. 128000), NOT the
