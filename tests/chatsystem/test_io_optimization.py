@@ -130,6 +130,7 @@ class TestIOOptimization:
 
     def test_real_integration_batch_count(self, tmp_path):
         """Real integration test for batch count in ChatEngine"""
+        ChatEngine.clear_client_cache()
         history_file = tmp_path / "test_history.json"
 
         mock_settings = MagicMock()
