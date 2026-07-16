@@ -6,6 +6,7 @@ ChatCLI - Interactive CLI interface with Rich formatting
 import os
 import sys
 import logging
+from pathlib import Path
 from typing import Optional
 from rich.console import Console
 from rich.markdown import Markdown
@@ -18,6 +19,7 @@ from pydantic import ValidationError
 
 from ..core.config import Settings, get_settings
 from ..core.chat_engine import ChatEngine
+from ..core import sessions
 from ..tools.tool_registry import ToolRegistry
 from agents.agent_manager import AgentManager, AgentType
 
@@ -30,11 +32,6 @@ class ChatCLI:
         self.console = Console()
         self.cli_config = self.settings.get_cli_config()
 
-        # Let ChatEngine build the conversation from the conversation config
-        # (correct context window, auto-save, auto-summarize, history path).
-        self.chat_engine = ChatEngine(settings=self.settings)
-        self.conversation = self.chat_engine.conversation
-
         # Initialize tools: sandbox path args to the working directory and apply
         # the configured per-tool timeout (full security hardening).
         enabled_tools = self.settings.get_enabled_tools()
@@ -44,10 +41,16 @@ class ChatCLI:
             sandbox_root=os.getcwd(),
         )
 
-        # Register tools with chat engine
-        tools = self.tool_registry.get_tools()
-        executor = self.tool_registry.get_tool_executor()
-        self.chat_engine.register_tools(tools, executor)
+        # Active session. "default" maps to the legacy history path (None ->
+        # ChatEngine falls back to settings/config); named sessions carry their
+        # own history file under ~/.chatsystem_sessions/.
+        self.session_name = sessions.DEFAULT_SESSION
+        self._session_history: Optional[str] = None
+
+        # Let ChatEngine build the conversation from the conversation config
+        # (correct context window, auto-save, auto-summarize, history path).
+        self.chat_engine = self._build_engine(self._session_history)
+        self.conversation = self.chat_engine.conversation
 
         # Initialize agent manager
         self.agent_manager = AgentManager(settings=self.settings)
@@ -79,6 +82,7 @@ Type your message or try these commands:
 - `/agents` - List available agents
 - `/agent` - Switch agent
 - `/tools` - List available tools
+- `/session` - Manage named conversation sessions
 - `/stats` - Show usage statistics
 - `/health` - Tool health dashboard
 - `/clear` - Clear conversation
@@ -101,6 +105,7 @@ Type your message or try these commands:
             ("/agents", "List all available agents"),
             ("/agent", "Switch to a different agent"),
             ("/tools", "List all available tools"),
+            ("/session", "Manage named sessions (list/new/switch/delete)"),
             ("/stats", "Show usage statistics"),
             ("/health", "Show tool health metrics"),
             ("/context", "Show context window usage"),
@@ -358,6 +363,129 @@ Type your message or try these commands:
         except Exception as e:
             self.console.print(f"[red]Error during summarization:[/red] {e}")
 
+    def _build_engine(self, history_file: Optional[str]) -> ChatEngine:
+        """Build a ChatEngine on the given history file, tools registered."""
+        engine = ChatEngine(settings=self.settings, history_file=history_file)
+        engine.register_tools(
+            self.tool_registry.get_tools(), self.tool_registry.get_tool_executor()
+        )
+        return engine
+
+    def _activate_session(self, name: str, path: Optional[str]):
+        """Point the CLI at a session's history file and rebuild engine + agent on it."""
+        # Build first, mutate after — a failed rebuild must not leave the CLI
+        # claiming a session it never activated.
+        engine = self._build_engine(path)
+        self.agent_manager.set_current_agent(
+            self.agent_manager.current_agent_type, chat_engine=engine
+        )
+        self.agent = self.agent_manager.get_current_agent()
+        self.chat_engine = engine
+        self.conversation = engine.conversation
+        self.session_name = name
+        self._session_history = path
+        self.console.print(f"\n[green]✓ Session:[/green] {name}")
+
+    def display_sessions(self):
+        """Show the active session and all saved sessions"""
+        table = Table(title="Sessions", show_header=True)
+        table.add_column("Session", style="cyan", no_wrap=True)
+        table.add_column("Last Modified", style="white")
+
+        from datetime import datetime
+
+        # Same fallback ConversationManager uses when no history path is configured
+        default_path = Path(self.settings.history_file) if self.settings.history_file \
+            else Path.home() / ".chatsystem_history.json"
+
+        names = [sessions.DEFAULT_SESSION] + sessions.list_sessions()
+        for name in names:
+            path = default_path if name == sessions.DEFAULT_SESSION else sessions.session_path(name)
+            modified = "—"
+            if path.exists():
+                mtime = datetime.fromtimestamp(path.stat().st_mtime)
+                modified = mtime.strftime("%Y-%m-%d %H:%M")
+            marker = "* " if name == self.session_name else "  "
+            table.add_row(f"{marker}{name}", modified)
+
+        self.console.print(table)
+        self.console.print("[dim]Usage: /session list | new <name> | switch <name> | delete <name>[/dim]")
+
+    def handle_session_command(self, arg: Optional[str]):
+        """Handle /session subcommands: list (default), new, switch, delete"""
+        parts = arg.split(maxsplit=1) if arg else []
+        sub = parts[0].lower() if parts else "list"
+        name = parts[1].strip() if len(parts) > 1 else None
+
+        if sub == "list":
+            self.display_sessions()
+            return
+        if sub not in ("new", "switch", "delete"):
+            self.console.print(f"[red]Unknown subcommand:[/red] {sub}")
+            self.console.print("Usage: /session list | new <name> | switch <name> | delete <name>")
+            return
+        if not name:
+            self.console.print(f"[red]Usage:[/red] /session {sub} <name>")
+            return
+
+        # Sessions ride ConversationManager's auto-save persistence; without it
+        # nothing is loaded or written, so activation would silently no-op.
+        if sub in ("new", "switch") and not self.conversation.auto_save:
+            self.console.print(
+                "[red]Sessions require auto-save.[/red] Enable conversation.auto_save_history in config.yaml"
+            )
+            return
+
+        if name == sessions.DEFAULT_SESSION:
+            if sub != "switch":
+                self.console.print(
+                    f"[red]'{sessions.DEFAULT_SESSION}' is reserved[/red] — it is the main history and cannot be created or deleted"
+                )
+                return
+            path = None
+        else:
+            try:
+                path = str(sessions.session_path(name))
+            except ValueError as e:
+                self.console.print(f"[red]Invalid session name:[/red] {e}")
+                return
+            # On case-insensitive filesystems (macOS default) "WORK" opens
+            # work.json — canonicalize to the on-disk name so the active-session
+            # guards compare like with like.
+            existing = sessions.list_sessions()
+            if name not in existing and Path(path).exists():
+                match = next((s for s in existing if s.lower() == name.lower()), None)
+                if match:
+                    name = match
+                    path = str(sessions.session_path(match))
+
+        if sub == "delete":
+            if name == self.session_name:
+                self.console.print("[red]Cannot delete the active session.[/red] Switch away first.")
+                return
+            if not Path(path).exists():
+                self.console.print(f"[red]No session named:[/red] {name}")
+                return
+            if Confirm.ask(f"Delete session '{name}'?"):
+                sessions.delete_session(name)
+                self.console.print(f"[green]✓[/green] Deleted session '{name}'")
+            return
+
+        if name == self.session_name:
+            self.console.print(f"[yellow]Already in session:[/yellow] {name}")
+            return
+
+        if sub == "new" and Path(path).exists():
+            self.console.print(
+                f"[red]Session '{name}' already exists.[/red] Use /session switch {name}"
+            )
+            return
+        if sub == "switch" and path is not None and not Path(path).exists():
+            if not Confirm.ask(f"No session named '{name}'. Create it?"):
+                return
+
+        self._activate_session(name, path)
+
     def switch_agent(self, agent_name: Optional[str] = None):
         """Switch to a different agent"""
         if not agent_name:
@@ -376,15 +504,11 @@ Type your message or try these commands:
 
         # Switch agent
         try:
-            # Create a fresh chat engine (and its config-wired conversation) for the
-            # new agent to avoid persona mixing.
-            new_chat_engine = ChatEngine(settings=self.settings)
+            # Create a fresh chat engine (and its config-wired conversation) for
+            # the new agent to avoid persona mixing. Stays on the active
+            # session's history file.
+            new_chat_engine = self._build_engine(self._session_history)
             new_conversation = new_chat_engine.conversation
-
-            # Register tools with new chat engine
-            tools = self.tool_registry.get_tools()
-            executor = self.tool_registry.get_tool_executor()
-            new_chat_engine.register_tools(tools, executor)
 
             # Set new agent
             self.agent_manager.set_current_agent(agent_type, chat_engine=new_chat_engine)
@@ -421,6 +545,9 @@ Type your message or try these commands:
 
         elif base_cmd == "/agent":
             self.switch_agent(cmd_arg)
+
+        elif base_cmd == "/session":
+            self.handle_session_command(cmd_arg)
 
         elif cmd == "/tools":
             self.display_tools()
