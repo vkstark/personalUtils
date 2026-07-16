@@ -183,15 +183,22 @@ class ConversationManager:
             # Fallback for unknown/unsupported models - use latest encoding
             self.encoding = tiktoken.get_encoding("o200k_base")
 
-        # Add system prompt if provided
-        if system_prompt:
-            self.add_message(role="system", content=system_prompt)
-        else:
+        # Seed the system prompt and load prior history inside one save batch.
+        # Ordering/batching is load-bearing: add_message auto-saves with O_TRUNC,
+        # so an eager write here would clobber the existing history before it is
+        # read. The default prompt is also skipped when history exists — the
+        # loaded history already carries its system message.
+        history_exists = self.auto_save and self.history_file.exists()
+        with self.batch_saves():
+            if system_prompt:
+                self.add_message(role="system", content=system_prompt)
+            elif not history_exists:
+                self._add_default_system_prompt()
+            if history_exists:
+                self._load_history()
+        if not self.messages:
+            # e.g. an existing file with an empty message list
             self._add_default_system_prompt()
-
-        # Load previous history if available
-        if self.auto_save and self.history_file.exists():
-            self._load_history()
 
     def _reset_state(self):
         """

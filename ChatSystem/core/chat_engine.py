@@ -52,6 +52,7 @@ class ChatEngine:
         self,
         settings: Optional[Settings] = None,
         conversation: Optional[ConversationManager] = None,
+        history_file: Optional[str] = None,
     ):
         """
         Initializes the ChatEngine.
@@ -62,6 +63,10 @@ class ChatEngine:
             conversation (Optional[ConversationManager], optional): An instance
                 of the ConversationManager. If None, a new one is created.
                 Defaults to None.
+            history_file (Optional[str], optional): History-file path for the
+                default-built conversation (e.g. a named session's file).
+                Overrides `settings.history_file`. Ignored when `conversation`
+                is provided. Defaults to None.
         """
         from .config import get_settings
 
@@ -84,7 +89,7 @@ class ChatEngine:
                 model=self.settings.model_name,
                 max_tokens=conv_cfg["max_tokens_default"],
                 auto_save=conv_cfg["auto_save_history"],
-                history_file=self.settings.history_file,
+                history_file=history_file or self.settings.history_file,
                 auto_summarize_enabled=conv_cfg["auto_summarize_enabled"],
                 summarize_threshold=conv_cfg["summarize_threshold"],
                 summarize_target_ratio=conv_cfg["summarize_target_ratio"],

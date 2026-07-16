@@ -110,8 +110,10 @@ One repeating pattern, learn it once: PascalCase dir (`CodeWhisper`) → snake_c
 
 ### Conversation + state + caching (`ChatSystem/core/conversation.py`)
 
-`ConversationManager` owns history (persisted to `~/.chatsystem_history.json` by default — a single
-shared file unless overridden) and four invalidate-on-write caches: `_cached_openai_messages`,
+`ConversationManager` owns history (persisted to `~/.chatsystem_history.json` by default; the CLI's
+`/session` command maps named sessions to `~/.chatsystem_sessions/<name>.json` via
+`ChatSystem/core/sessions.py`, with `"default"` reserved for the legacy file) and four
+invalidate-on-write caches: `_cached_openai_messages`,
 `_cached_openai_messages_no_system`, `_cached_dumped_messages`, `_cached_summary`. Invariants:
 
 - Any method that mutates the message list **must** keep `_invalidate_cache()`, the running
@@ -122,6 +124,10 @@ shared file unless overridden) and four invalidate-on-write caches: `_cached_ope
 - `batch_saves()` is a **reentrant** context manager that defers disk writes until the outermost exit;
   `_handle_tool_calls` wraps multi-message turns in it. Outside a batch, every `add_message` writes to
   disk.
+- `__init__` seeds the system prompt and loads prior history **inside one `batch_saves()` block**, and
+  skips the default prompt when the history file exists. Reordering this reintroduces a
+  clobber-on-startup data loss (`add_message` auto-saves with `O_TRUNC` before the load) — see
+  `docs/designs/named-sessions.md`.
 - `model_dump(mode='json')` is required where it appears (datetime → ISO string); plain `model_dump`
   raises on save.
 - `trim_context()` / summarization always keep system messages and drop oldest non-system first.
