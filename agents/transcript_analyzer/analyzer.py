@@ -375,8 +375,8 @@ Begin every analysis by carefully reading the transcript multiple times, then pr
         self.max_iterations = max_iterations
         self.model = model
 
-        # Set the system persona
-        self.chat_engine.conversation.add_message("system", self.SYSTEM_PERSONA)
+        # Set the system persona (idempotent — history may already contain it)
+        self.chat_engine.conversation.ensure_system_message(self.SYSTEM_PERSONA)
 
     def analyze(self, transcript: str) -> str:
         """

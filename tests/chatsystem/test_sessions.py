@@ -214,6 +214,71 @@ class TestSessionCLI:
         assert cli.session_name == "default"
         assert sessions.list_sessions() == []
 
+    def test_persona_not_duplicated_across_session_roundtrips(self, cli):
+        """Regression: each /session reactivation must not append another persona copy."""
+        cli.handle_session_command("new work")
+        baseline = sum(1 for m in cli.conversation.messages if m.role == "system")
+
+        cli.handle_session_command("switch default")
+        cli.handle_session_command("switch work")
+        cli.handle_session_command("switch default")
+        cli.handle_session_command("switch work")
+
+        assert (
+            sum(1 for m in cli.conversation.messages if m.role == "system") == baseline
+        )
+
+
+class TestEnsureSystemMessage:
+    """ensure_system_message adds a system message exactly once."""
+
+    def test_second_call_is_noop(self, tmp_path):
+        from ChatSystem.core.conversation import ConversationManager
+
+        mgr = ConversationManager(
+            model="gpt-4o",
+            history_file=str(tmp_path / "h.json"),
+            auto_save=False,
+        )
+        before = len(mgr.messages)
+
+        mgr.ensure_system_message("You are the persona.")
+        mgr.ensure_system_message("You are the persona.")
+
+        assert len(mgr.messages) == before + 1
+
+    def test_different_content_still_added(self, tmp_path):
+        from ChatSystem.core.conversation import ConversationManager
+
+        mgr = ConversationManager(
+            model="gpt-4o",
+            history_file=str(tmp_path / "h.json"),
+            auto_save=False,
+        )
+        mgr.ensure_system_message("persona A")
+        mgr.ensure_system_message("persona B")
+
+        assert sum(1 for m in mgr.messages if m.content == "persona A") == 1
+        assert sum(1 for m in mgr.messages if m.content == "persona B") == 1
+
+
+class TestTildeExpansion:
+    """A ~/… history path must expand to the home directory, not a literal '~' dir."""
+
+    def test_history_file_tilde_expanded(self, tmp_path, monkeypatch):
+        from ChatSystem.core.conversation import ConversationManager
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.chdir(tmp_path)  # a regression would create ./~ here, not in the repo
+        mgr = ConversationManager(
+            model="gpt-4o", history_file="~/hist.json", auto_save=True
+        )
+        mgr.add_message(role="user", content="hi")
+
+        assert mgr.history_file == tmp_path / "hist.json"
+        assert (tmp_path / "hist.json").exists()
+        assert not (tmp_path / "~").exists()
+
 
 class TestChatEngineHistoryOverride:
     """ChatEngine(history_file=...) binds its conversation to the session file."""

@@ -395,7 +395,7 @@ Type your message or try these commands:
         from datetime import datetime
 
         # Same fallback ConversationManager uses when no history path is configured
-        default_path = Path(self.settings.history_file) if self.settings.history_file \
+        default_path = Path(self.settings.history_file).expanduser() if self.settings.history_file \
             else Path.home() / ".chatsystem_history.json"
 
         names = [sessions.DEFAULT_SESSION] + sessions.list_sessions()

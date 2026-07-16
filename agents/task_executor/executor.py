@@ -81,8 +81,9 @@ When executing tasks:
         self.planner = TaskPlanner(chat_engine=chat_engine)
         self.reasoner = Reasoner()
 
-        # Add system persona to conversation
-        self.chat_engine.conversation.add_message("system", self.get_formatted_persona())
+        # Add system persona to conversation (idempotent — the conversation may
+        # have reloaded a history that already contains it)
+        self.chat_engine.conversation.ensure_system_message(self.get_formatted_persona())
 
     def get_formatted_persona(self) -> str:
         """The persona with the live tool list substituted into `{tools}`.

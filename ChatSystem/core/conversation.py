@@ -165,7 +165,7 @@ class ConversationManager:
 
         # Set up history file
         if history_file:
-            self.history_file = Path(history_file)
+            self.history_file = Path(history_file).expanduser()
         else:
             self.history_file = Path.home() / ".chatsystem_history.json"
 
@@ -310,6 +310,18 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             self._save_history()
 
         return message
+
+    def ensure_system_message(self, content: str) -> None:
+        """
+        Adds a system message unless an identical one is already in history.
+
+        Keeps persona/system-prompt injection idempotent when the conversation
+        was reloaded from disk — the loaded history already carries the persona,
+        so re-injecting on every engine swap would duplicate it.
+        """
+        if any(m.role == "system" and m.content == content for m in self.messages):
+            return
+        self.add_message(role="system", content=content)
 
     def get_messages(self, include_system: bool = True) -> List[Dict[str, Any]]:
         """

@@ -138,9 +138,9 @@ class AgentManager:
             # Prefer get_formatted_persona() so placeholders (e.g. AgentExecutor's
             # {tools}) are substituted exactly as they are at construction time.
             if hasattr(agent, 'get_formatted_persona'):
-                agent.chat_engine.conversation.add_message("system", agent.get_formatted_persona())
+                agent.chat_engine.conversation.ensure_system_message(agent.get_formatted_persona())
             elif hasattr(agent, 'SYSTEM_PERSONA'):
-                agent.chat_engine.conversation.add_message("system", agent.SYSTEM_PERSONA)
+                agent.chat_engine.conversation.ensure_system_message(agent.SYSTEM_PERSONA)
 
             return agent
 
