@@ -429,7 +429,7 @@ class ChatEngine:
             error_msg = f"Error parsing tool arguments: {str(e)}"
             self.conversation.add_message(
                 role="tool",
-                content=json.dumps({"error": error_msg}),
+                content=json.dumps({"error": error_msg}, separators=(',', ':')),
                 tool_call_id=tool_call.id,
                 name=function_name,
             )
@@ -444,7 +444,7 @@ class ChatEngine:
             error_msg = f"Error executing tool {function_name}: {str(e)}"
             self.conversation.add_message(
                 role="tool",
-                content=json.dumps({"error": error_msg}),
+                content=json.dumps({"error": error_msg}, separators=(',', ':')),
                 tool_call_id=tool_call.id,
                 name=function_name,
             )
@@ -459,7 +459,7 @@ class ChatEngine:
         result_dict = result.to_legacy_dict()
         self.conversation.add_message(
             role="tool",
-            content=json.dumps(result_dict),
+            content=json.dumps(result_dict, separators=(',', ':')),
             tool_call_id=tool_call.id,
             name=function_name,
         )
@@ -539,7 +539,7 @@ class ChatEngine:
                                     result_dict = result.to_legacy_dict()
                                     self.conversation.add_message(
                                         role="tool",
-                                        content=json.dumps(result_dict),
+                                        content=json.dumps(result_dict, separators=(',', ':')),
                                         tool_call_id=tc.id,
                                         name=tc.function.name,
                                     )
@@ -551,7 +551,7 @@ class ChatEngine:
                                     error_msg = f"Error executing tool {tc.function.name}: {str(e)}"
                                     self.conversation.add_message(
                                         role="tool",
-                                        content=json.dumps({"error": error_msg}),
+                                        content=json.dumps({"error": error_msg}, separators=(',', ':')),
                                         tool_call_id=tc.id,
                                         name=tc.function.name,
                                     )
