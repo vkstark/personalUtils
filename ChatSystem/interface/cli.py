@@ -14,6 +14,8 @@ from rich.table import Table
 from rich.prompt import Prompt, Confirm
 from rich.progress import TextColumn
 
+from pydantic import ValidationError
+
 from ..core.config import Settings, get_settings
 from ..core.chat_engine import ChatEngine
 from ..tools.tool_registry import ToolRegistry
@@ -523,10 +525,40 @@ Type your message or try these commands:
                 continue  # Continue after error
 
 
+_MISSING_KEY_HELP = (
+    "\n[red]Missing OpenAI API key.[/red] Set OPENAI_API_KEY before starting:\n\n"
+    "  cp .env.example .env      # then edit .env and set OPENAI_API_KEY=sk-...\n"
+    "  # or: export OPENAI_API_KEY=sk-...\n\n"
+    "See CHATSYSTEM_SETUP.md for setup details.\n"
+)
+
+
 def main():
     """Main entry point"""
+    console = Console()
+
+    # An unset key surfaces as a pydantic ValidationError; an empty or
+    # placeholder key passes validation but fails deep in the OpenAI SDK. Catch
+    # both here and print actionable guidance instead of a raw SDK error.
     try:
         settings = get_settings()
+    except ValidationError as e:
+        # Only a missing/blank OPENAI_API_KEY should show the key help. Any other
+        # invalid setting (e.g. a bad MODEL_NAME) must surface its real error
+        # rather than misdirect the user to key setup.
+        if any("openai_api_key" in str(loc)
+               for err in e.errors() for loc in err.get("loc", ())):
+            console.print(_MISSING_KEY_HELP)
+        else:
+            console.print(f"\n[red]Fatal Error:[/red] {e}\n")
+        sys.exit(1)
+
+    api_key = (settings.openai_api_key or "").strip()
+    if not api_key or api_key == "your-api-key-here":
+        console.print(_MISSING_KEY_HELP)
+        sys.exit(1)
+
+    try:
         # Wire log_file / log_level (previously unused config)
         logging.basicConfig(
             filename=settings.log_file,
@@ -539,7 +571,6 @@ def main():
         print("\n\nGoodbye! 👋\n")
         sys.exit(0)
     except Exception as e:
-        console = Console()
         console.print(f"\n[red]Fatal Error:[/red] {str(e)}\n")
         sys.exit(1)
 

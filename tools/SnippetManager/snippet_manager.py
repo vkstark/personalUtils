@@ -122,7 +122,16 @@ class SnippetManager:
             # Create parent directory if it doesn't exist
             self.storage_path.parent.mkdir(parents=True, exist_ok=True)
 
-            with open(self.storage_path, 'w', encoding='utf-8') as f:
+            # Snippets can hold tokens/keys; write 0600 like the toolkit's other
+            # at-rest files (API history, conversation history) rather than the
+            # umask default, so stored secrets aren't world-readable. The chmod
+            # also tightens a pre-existing store left loose by an older version.
+            fd = os.open(self.storage_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.chmod(self.storage_path, 0o600)
+            except OSError:
+                pass
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
         except Exception as e:
             print(f"Error: Could not save snippets: {e}", file=sys.stderr)
