@@ -280,7 +280,13 @@ class APITester:
 
             # Create 0600 (history can contain URLs/tokens); match the
             # conversation-history at-rest model rather than the umask default.
+            # The chmod also tightens a pre-existing file left loose by an
+            # older version (O_CREAT's mode only applies on creation).
             fd = os.open(self.history_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.chmod(self.history_file, 0o600)
+            except OSError:
+                pass
             with os.fdopen(fd, 'w') as f:
                 json.dump(history, f, indent=2)
 
