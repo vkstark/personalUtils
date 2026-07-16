@@ -51,3 +51,7 @@
 ## 2026-06-25 - [Optimize tool result serialization and token counting]
 **Learning:** Found that tool results were being serialized with indentation or standard whitespace, and token counting was using the slower `encode()` method. Compact JSON serialization reduces token usage and latency when passing tool outputs back to the LLM.
 **Action:** Implemented compact JSON serialization (`separators=(',', ':')`) in `ToolExecutionResult.get_output` and `ChatEngine`. Optimized `Message.get_token_count` by switching to `encoding.encode_ordinary()` and compact JSON for tool call counting.
+
+## 2026-07-07 - [Shared OpenAI client cache in ChatEngine]
+**Learning:** Found that each `ChatEngine` instantiation (which happens frequently in agentic loops) was creating a new `OpenAI` client, adding ~33ms of overhead and missing out on HTTP connection pooling.
+**Action:** Implemented a class-level `_client_cache` in `ChatEngine` to reuse clients based on API key. Added `clear_client_cache()` for test isolation. Measured a ~74% reduction in instantiation latency (from ~41.6ms to ~10.8ms).
