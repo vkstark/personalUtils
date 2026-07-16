@@ -510,8 +510,8 @@ You are a FRAMEWORK ENGINE that manufactures better thinkers.
         self.max_iterations = max_iterations
         self.model = model
 
-        # Set the system persona
-        self.chat_engine.conversation.add_message("system", self.SYSTEM_PERSONA)
+        # Set the system persona (idempotent — history may already contain it)
+        self.chat_engine.conversation.ensure_system_message(self.SYSTEM_PERSONA)
 
     def teach(self, user_request: str) -> str:
         """

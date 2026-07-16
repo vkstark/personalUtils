@@ -400,8 +400,8 @@ by upgrading how they think, learn, decide, and build – one framework at a tim
         self.max_iterations = max_iterations
         self.model = model
 
-        # Set the system persona
-        self.chat_engine.conversation.add_message("system", self.SYSTEM_PERSONA)
+        # Set the system persona (idempotent — history may already contain it)
+        self.chat_engine.conversation.ensure_system_message(self.SYSTEM_PERSONA)
 
     def respond(self, user_input: str) -> str:
         """
