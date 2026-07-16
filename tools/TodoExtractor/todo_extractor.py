@@ -147,14 +147,15 @@ class TodoExtractor:
         # Build regex pattern for all tags
         tag_pattern = '|'.join(re.escape(tag) for tag in self.tags.keys())
 
-        if self.case_sensitive:
-            pattern = r'\b(' + tag_pattern + r')\b:?\s*(.+?)(?:\s*\*\/|$)'
-        else:
-            pattern = r'\b(' + tag_pattern + r')\b:?\s*(.+?)(?:\s*\*\/|$)'
-            pattern = re.compile(pattern, re.IGNORECASE)
+        # Honor case_sensitive: compile once with the right flag. (The previous
+        # ternary always fell through to IGNORECASE, making the flag a no-op.)
+        flags = 0 if self.case_sensitive else re.IGNORECASE
+        pattern = re.compile(
+            r'\b(' + tag_pattern + r')\b:?\s*(.+?)(?:\s*\*\/|$)', flags
+        )
 
         # Search for tags in the line
-        for match in re.finditer(pattern, line) if isinstance(pattern, re.Pattern) else re.finditer(pattern, line, re.IGNORECASE):
+        for match in pattern.finditer(line):
             tag = match.group(1).upper()
             text = match.group(2).strip()
 

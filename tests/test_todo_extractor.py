@@ -136,3 +136,14 @@ class TestTodoItemCreation:
         )
 
         assert item.author == 'alice'
+
+    def test_case_sensitive_flag_is_respected(self, temp_dir):
+        """case_sensitive=True matches only exact-case tags (previously a no-op)."""
+        f = temp_dir / "mixed.py"
+        f.write_text("# todo: lower\n# TODO: upper\n")
+
+        insensitive = TodoExtractor(colors=False, case_sensitive=False).scan_file(str(f))
+        sensitive = TodoExtractor(colors=False, case_sensitive=True).scan_file(str(f))
+
+        assert len(insensitive) == 2   # matches both 'todo' and 'TODO'
+        assert len(sensitive) == 1     # only the exact-case 'TODO'

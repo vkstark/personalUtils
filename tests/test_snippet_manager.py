@@ -149,3 +149,29 @@ class TestSnippetPersistence:
 
         # Snippet should be loaded
         assert snippet_id in manager2.snippets
+
+    def test_storage_file_is_private(self, temp_dir):
+        """Snippet store is written 0600 so stored secrets aren't world-readable."""
+        import stat as _stat
+
+        storage_path = temp_dir / "private.json"
+        manager = SnippetManager(storage_path=str(storage_path), colors=False)
+        manager.add(title="key", code="OPENAI_API_KEY=sk-secret", language="python")
+
+        mode = _stat.S_IMODE(storage_path.stat().st_mode)
+        assert mode == 0o600
+
+    def test_pre_existing_loose_store_is_tightened(self, temp_dir):
+        """A store left world-readable by an older version is re-chmod'd to 0600 on save."""
+        import stat as _stat
+        import os as _os
+
+        storage_path = temp_dir / "legacy.json"
+        storage_path.write_text("[]")
+        _os.chmod(storage_path, 0o644)
+        assert _stat.S_IMODE(storage_path.stat().st_mode) == 0o644
+
+        manager = SnippetManager(storage_path=str(storage_path), colors=False)
+        manager.add(title="k", code="secret", language="python")
+
+        assert _stat.S_IMODE(storage_path.stat().st_mode) == 0o600

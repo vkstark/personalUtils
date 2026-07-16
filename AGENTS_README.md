@@ -1,6 +1,6 @@
-# Three Agent System Documentation
+# Four Agent System Documentation
 
-This document describes the three specialized AI agents designed to accelerate your journey to trillionaire-level capability.
+This document describes the four specialized AI agents designed to accelerate your journey to trillionaire-level capability.
 
 ---
 
