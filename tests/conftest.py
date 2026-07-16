@@ -83,3 +83,11 @@ def duplicate_files(temp_dir):
     file3.write_text("different content")
 
     return [file1, file2, file3]
+
+
+@pytest.fixture(autouse=True)
+def clear_chat_engine_cache():
+    """Automatically clear ChatEngine client cache before each test."""
+    from ChatSystem.core.chat_engine import ChatEngine
+    ChatEngine._client_cache.clear()
+    yield
