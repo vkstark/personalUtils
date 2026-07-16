@@ -15,6 +15,10 @@ class ToolAdapter:
     tools, providing methods to retrieve them in the appropriate format.
     """
 
+    # Internal cache for formatted tool definitions to avoid redundant dictionary
+    # creation and nested lookups.
+    _formatted_cache: Dict[str, Dict[str, Any]] = {}
+
     # Tool definitions for all 12 utilities
     TOOL_DEFINITIONS = {
         "CodeWhisper": {
@@ -146,7 +150,7 @@ class ToolAdapter:
 
         "BulkRename": {
             "name": "bulk_rename_files",
-            "description": "Batch rename files using patterns, regex, or sequential numbering.",
+            "description": "Batch rename files using patterns, regex, or sequential numbering. Note: this requires interactive confirmation and cannot complete non-interactively here; calling it returns instructions to run the tool manually rather than renaming files.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -181,7 +185,7 @@ class ToolAdapter:
 
         "EnvManager": {
             "name": "manage_env_files",
-            "description": "Manage .env configuration files. Parse, validate, and switch between environments.",
+            "description": "Read .env configuration files. Only the read-only 'parse' action runs here (values are redacted); write/switch actions require interactive confirmation and return instructions to run the tool manually instead.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -412,6 +416,24 @@ class ToolAdapter:
     }
 
     @classmethod
+    def _get_formatted_tool(cls, util_name: str) -> Dict[str, Any]:
+        """
+        Retrieves and caches a single tool definition in OpenAI format.
+        Returns a shallow copy to prevent external mutation of the cache.
+        """
+        if util_name not in cls._formatted_cache:
+            definition = cls.TOOL_DEFINITIONS[util_name]
+            cls._formatted_cache[util_name] = {
+                "type": "function",
+                "function": {
+                    "name": definition["name"],
+                    "description": definition["description"],
+                    "parameters": definition["parameters"],
+                }
+            }
+        return cls._formatted_cache[util_name].copy()
+
+    @classmethod
     def get_all_tools(cls) -> List[Dict[str, Any]]:
         """
         Retrieves all available tools in the OpenAI function calling format.
@@ -424,21 +446,7 @@ class ToolAdapter:
             dictionary with a "type" of "function" and a "function" object
             containing the name, description, and parameters.
         """
-        tools = []
-
-        for util_name, definition in cls.TOOL_DEFINITIONS.items():
-            tool = {
-                "type": "function",
-                "function": {
-                    "name": definition["name"],
-                    "description": definition["description"],
-                    "parameters": definition["parameters"],
-                }
-            }
-
-            tools.append(tool)
-
-        return tools
+        return [cls._get_formatted_tool(util_name) for util_name in cls.TOOL_DEFINITIONS]
 
     @classmethod
     def get_tool_by_name(cls, name: str) -> Optional[Dict[str, Any]]:
@@ -455,14 +463,7 @@ class ToolAdapter:
         """
         for util_name, definition in cls.TOOL_DEFINITIONS.items():
             if definition["name"] == name:
-                return {
-                    "type": "function",
-                    "function": {
-                        "name": definition["name"],
-                        "description": definition["description"],
-                        "parameters": definition["parameters"],
-                    }
-                }
+                return cls._get_formatted_tool(util_name)
         return None
 
     @classmethod
@@ -481,19 +482,12 @@ class ToolAdapter:
             List[Dict[str, Any]]: A filtered list of tool definitions in the
             OpenAI format.
         """
-        tools = []
+        # Bolt: Use a set for O(1) lookup during filtering
+        enabled_set = set(enabled_utils)
 
-        for util_name, definition in cls.TOOL_DEFINITIONS.items():
-            if util_name in enabled_utils:
-                tool = {
-                    "type": "function",
-                    "function": {
-                        "name": definition["name"],
-                        "description": definition["description"],
-                        "parameters": definition["parameters"],
-                    }
-                }
-
-                tools.append(tool)
-
-        return tools
+        # Preserving original definition ordering
+        return [
+            cls._get_formatted_tool(util_name)
+            for util_name in cls.TOOL_DEFINITIONS
+            if util_name in enabled_set
+        ]

@@ -17,6 +17,16 @@ from typing import List
 from datetime import datetime, timedelta
 from collections import defaultdict, Counter
 
+# Neutralize config-driven code execution when running git against a repo we
+# don't control: core.fsmonitor and core.hooksPath can point at arbitrary
+# commands that git runs automatically (e.g. on index refresh). Passing these
+# with -c overrides whatever the target repo's .git/config sets.
+_GIT_HARDENING = [
+    "-c", "core.fsmonitor=",
+    "-c", "core.hooksPath=/dev/null",
+    "-c", "core.pager=cat",
+]
+
 # Color codes for terminal output
 class Colors:
     RESET = '\033[0m'
@@ -94,7 +104,7 @@ class GitStats:
         """Check if directory is a git repository"""
         try:
             result = subprocess.run(
-                ['git', 'rev-parse', '--git-dir'],
+                ['git'] + _GIT_HARDENING + ['rev-parse', '--git-dir'],
                 cwd=self.repo_path,
                 capture_output=True,
                 text=True
@@ -107,7 +117,7 @@ class GitStats:
         """Run a git command and return output"""
         try:
             result = subprocess.run(
-                ['git'] + args,
+                ['git'] + _GIT_HARDENING + args,
                 cwd=self.repo_path,
                 capture_output=True,
                 text=True,

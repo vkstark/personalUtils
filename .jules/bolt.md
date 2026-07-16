@@ -44,6 +44,10 @@
 **Learning:** `ToolMetrics.to_dict()` was being called frequently in `ChatEngine.get_stats()`, causing redundant calculations and string formatting. Also, manual list slicing for `error_history` was O(N) for each update.
 **Action:** Implemented lazy caching for `to_dict()` and replaced the list-based `error_history` with `collections.deque(maxlen=10)`. Measured a ~32x speedup for `get_stats()` (from ~0.16ms to ~0.005ms). Always return a shallow copy (`.copy()`) when caching dictionaries to prevent external mutation of the internal state.
 
+## 2026-06-25 - [Optimize ToolAdapter with class-level caching]
+**Learning:** `ToolAdapter` methods were re-formatting and re-creating dictionary structures for all tool definitions on every call. This was especially wasteful in `get_enabled_tools` which also used linear list filtering.
+**Action:** Implemented a private class-level cache `_formatted_cache` and a `_get_formatted_tool` helper. Updated retrieval methods to use the cache and return shallow copies to prevent external mutation. Optimized filtering in `get_enabled_tools` using a `set`. Measured a ~2.8x speedup in tool registration.
+
 ## 2026-06-25 - [Optimize tool result serialization and token counting]
 **Learning:** Found that tool results were being serialized with indentation or standard whitespace, and token counting was using the slower `encode()` method. Compact JSON serialization reduces token usage and latency when passing tool outputs back to the LLM.
 **Action:** Implemented compact JSON serialization (`separators=(',', ':')`) in `ToolExecutionResult.get_output` and `ChatEngine`. Optimized `Message.get_token_count` by switching to `encoding.encode_ordinary()` and compact JSON for tool call counting.

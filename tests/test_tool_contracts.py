@@ -157,8 +157,11 @@ class TestToolContracts:
         assert result.status == ToolStatus.SUCCESS
         assert result.duration >= 0
 
-    def test_snippet_manager_list(self, executor):
-        """SnippetManager: list snippets"""
+    def test_snippet_manager_list(self, executor, tmp_path, monkeypatch):
+        """SnippetManager: list snippets (hermetic: redirect HOME to a tmp store)."""
+        # SnippetManager stores at ~/.snippets.json; point HOME at tmp so the
+        # test doesn't read/write the developer's real snippet store.
+        monkeypatch.setenv("HOME", str(tmp_path))
         result = executor.execute("manage_code_snippets", {"action": "list"})
 
         assert isinstance(result, ToolExecutionResult)
@@ -222,15 +225,21 @@ class TestToolContracts:
         assert result.status in [ToolStatus.SUCCESS, ToolStatus.ERROR]
         assert result.duration >= 0
 
-    def test_git_stats_success(self, executor):
-        """GitStats: analyze current repository"""
+    def test_git_stats_success(self, executor, tmp_path):
+        """GitStats: analyze a throwaway repo (hermetic: not the dev's own repo)."""
+        import subprocess
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+        subprocess.run(
+            ["git", "-c", "user.email=t@example.com", "-c", "user.name=t",
+             "commit", "--allow-empty", "-q", "-m", "init"],
+            cwd=tmp_path, check=True,
+        )
         result = executor.execute("analyze_git_repository", {
-            "repo_path": ".",
+            "repo_path": str(tmp_path),
             "report_type": "summary"
         })
 
         assert isinstance(result, ToolExecutionResult)
-        # Should succeed if we're in a git repo
         assert result.status in [ToolStatus.SUCCESS, ToolStatus.ERROR]
         assert result.duration >= 0
 

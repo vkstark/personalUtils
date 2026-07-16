@@ -2,12 +2,15 @@
 # Install with: pip install -r requirements-dev.txt
 
 # Testing framework
-pytest>=7.0.0
-pytest-cov>=4.0.0
+# Upper bounds cap the volatile test/lint tools at their current major so a
+# breaking release can't silently fail a fresh install's test/lint run.
+pytest>=7.0.0,<10
+pytest-cov>=4.0.0,<7
 
 # Code quality (run ad hoc: `ruff check .` / `mypy .`)
-ruff>=0.6.0
-mypy>=1.11.0
+ruff>=0.6.0,<1
+mypy>=1.11.0,<3
+types-PyYAML>=6.0  # yaml stubs so mypy can check config.py
 
 # Additional utilities (if needed by the main code)
 PyYAML>=6.0  # For DataConvert

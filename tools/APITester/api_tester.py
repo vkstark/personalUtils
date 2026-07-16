@@ -10,12 +10,77 @@ License: MIT
 import os
 import sys
 import argparse
+import contextlib
+import ipaddress
 import json
+import socket
 import time
 from urllib import request, error, parse
 from typing import Dict, Optional, Any
 from datetime import datetime
 from pathlib import Path
+
+
+class SSRFError(Exception):
+    """Raised when a request target resolves to a disallowed (internal) address."""
+
+
+def _ip_is_blocked(ip_str: str) -> bool:
+    """True if the IP is loopback/link-local/private/reserved (SSRF targets).
+
+    169.254.169.254 (cloud metadata) is link-local and therefore blocked here.
+    """
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return False
+    return (
+        ip.is_loopback or ip.is_link_local or ip.is_private
+        or ip.is_reserved or ip.is_multicast or ip.is_unspecified
+    )
+
+
+class _ValidatingRedirectHandler(request.HTTPRedirectHandler):
+    """Follows redirects but refuses to jump to a non-http(s) scheme.
+
+    IP-level validation of the redirect target is handled uniformly by the
+    _ssrf_guarded_dns() socket guard, which checks every host resolution
+    (initial and each hop) at connect time.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        scheme = parse.urlparse(newurl).scheme
+        if scheme not in ("http", "https"):
+            raise SSRFError(f"Refusing redirect to non-http(s) URL: {newurl}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+@contextlib.contextmanager
+def _ssrf_guarded_dns():
+    """Validate every DNS resolution against the private-IP block-list.
+
+    By checking inside getaddrinfo, the address that is validated is the exact
+    address the socket then connects to — closing the TOCTOU / DNS-rebinding gap
+    a separate pre-flight check would leave open. Also covers each redirect hop.
+    """
+    real_getaddrinfo = socket.getaddrinfo
+
+    def guarded(host, *args, **kwargs):
+        infos = real_getaddrinfo(host, *args, **kwargs)
+        for info in infos:
+            ip = info[4][0]
+            if _ip_is_blocked(ip):
+                raise SSRFError(
+                    f"Refusing to connect to '{host}': resolves to blocked "
+                    f"internal/private address {ip}"
+                )
+        return infos
+
+    socket.getaddrinfo = guarded
+    try:
+        yield
+    finally:
+        socket.getaddrinfo = real_getaddrinfo
 
 # Color codes
 class Colors:
@@ -71,14 +136,28 @@ class APITester:
             else:
                 req_data = json.dumps(data).encode('utf-8')
 
+        # SSRF: only http(s), and reject before we do any work
+        scheme = parse.urlparse(url).scheme.lower()
+        if scheme not in ("http", "https"):
+            return {
+                "success": False,
+                "error": f"Only http/https URLs are allowed (got scheme '{scheme or 'none'}')",
+                "time": 0.0,
+            }
+
         # Create request
         req = request.Request(url, data=req_data, headers=req_headers, method=method)
+
+        # Install a validating opener so redirects are re-checked at each hop.
+        # Calling request.urlopen (not opener.open) keeps this interceptable by
+        # the standard urllib.request.urlopen mock in tests.
+        request.install_opener(request.build_opener(_ValidatingRedirectHandler()))
 
         # Make request
         start_time = time.time()
 
         try:
-            with request.urlopen(req, timeout=timeout) as response:
+            with _ssrf_guarded_dns(), request.urlopen(req, timeout=timeout) as response:
                 response_time = time.time() - start_time
                 body = response.read().decode('utf-8')
 
@@ -96,6 +175,13 @@ class APITester:
                     'time': response_time,
                     'success': True
                 }
+
+        except SSRFError as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'time': time.time() - start_time,
+            }
 
         except error.HTTPError as e:
             response_time = time.time() - start_time
@@ -192,7 +278,16 @@ class APITester:
             # Keep last 100
             history = history[-100:]
 
-            with open(self.history_file, 'w') as f:
+            # Create 0600 (history can contain URLs/tokens); match the
+            # conversation-history at-rest model rather than the umask default.
+            # The chmod also tightens a pre-existing file left loose by an
+            # older version (O_CREAT's mode only applies on creation).
+            fd = os.open(self.history_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.chmod(self.history_file, 0o600)
+            except OSError:
+                pass
+            with os.fdopen(fd, 'w') as f:
                 json.dump(history, f, indent=2)
 
         except Exception as e:

@@ -234,9 +234,11 @@ class Reasoner:
         trace_dict = self.export_trace_dict()
         summary = f"Reasoning trace: {len(self.reasoning_chain)} steps, {trace_dict['total_time']:.2f}s total"
 
-        # Add as system message with metadata
+        # Attach as an assistant message, not system: system messages are never
+        # dropped by trim_context/summarization, so a system trace per task would
+        # grow the context unbounded across a session.
         conversation_manager.add_message(
-            role="system",
+            role="assistant",
             content=f"[Reasoning Trace]\n{self.get_reasoning_trace()}"
         )
 

@@ -169,6 +169,84 @@ def test_imports():
     assert Reasoner is not None
 
 
+class TestMainMissingKey:
+    """main() gives actionable guidance, not a raw SDK error, when the key is absent."""
+
+    def test_empty_key_prints_friendly_message(self, monkeypatch, capsys):
+        import types as _types
+        from ChatSystem.interface import cli as cli_mod
+
+        monkeypatch.setattr(
+            cli_mod, "get_settings",
+            lambda: _types.SimpleNamespace(openai_api_key=""),
+        )
+        with pytest.raises(SystemExit) as exc:
+            cli_mod.main()
+
+        assert exc.value.code == 1
+        out = capsys.readouterr().out
+        assert "OPENAI_API_KEY" in out
+        assert ".env" in out
+
+    def test_placeholder_key_prints_friendly_message(self, monkeypatch, capsys):
+        import types as _types
+        from ChatSystem.interface import cli as cli_mod
+
+        monkeypatch.setattr(
+            cli_mod, "get_settings",
+            lambda: _types.SimpleNamespace(openai_api_key="your-api-key-here"),
+        )
+        with pytest.raises(SystemExit) as exc:
+            cli_mod.main()
+
+        assert exc.value.code == 1
+        assert "OPENAI_API_KEY" in capsys.readouterr().out
+
+    def test_missing_key_validation_error_shows_key_help(self, monkeypatch, capsys):
+        """A ValidationError on the required openai_api_key field shows the key help."""
+        from pydantic import BaseModel, ValidationError as _VE
+        from ChatSystem.interface import cli as cli_mod
+
+        class _M(BaseModel):
+            openai_api_key: str
+        try:
+            _M()
+        except _VE as e:
+            err = e
+
+        def _raise():
+            raise err
+        monkeypatch.setattr(cli_mod, "get_settings", _raise)
+        with pytest.raises(SystemExit) as exc:
+            cli_mod.main()
+
+        assert exc.value.code == 1
+        assert "OPENAI_API_KEY" in capsys.readouterr().out
+
+    def test_non_key_validation_error_surfaces_real_error(self, monkeypatch, capsys):
+        """A non-key config error (e.g. bad MODEL_NAME) must NOT be mislabeled as a missing key."""
+        from pydantic import BaseModel, ValidationError as _VE
+        from ChatSystem.interface import cli as cli_mod
+
+        class _M(BaseModel):
+            model_name: str
+        try:
+            _M()
+        except _VE as e:
+            err = e
+
+        def _raise():
+            raise err
+        monkeypatch.setattr(cli_mod, "get_settings", _raise)
+        with pytest.raises(SystemExit) as exc:
+            cli_mod.main()
+
+        assert exc.value.code == 1
+        out = capsys.readouterr().out
+        assert "Missing OpenAI API key" not in out
+        assert "Fatal Error" in out
+
+
 if __name__ == "__main__":
     # Run tests
     pytest.main([__file__, "-v"])

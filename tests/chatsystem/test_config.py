@@ -50,9 +50,18 @@ class TestConfigAccessors:
         a = _settings().get_agent_config_for("task_executor")
         assert a["model"] is None  # no YAML -> agent picks its own tier
         assert a["enable_planning"] is True
-        assert a["enable_reasoning"] is True
-        assert "summarize_threshold" in a
-        assert "persist_reasoning" in a
+        assert "max_iterations" in a
+        # Only wired keys are exposed; previously-unused knobs were removed so
+        # the config surface reflects what the runtime actually honors.
+        assert set(a.keys()) == {"max_iterations", "enable_planning", "model"}
+
+    def test_agent_config_for_rejects_invalid_model(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("agents:\n  task_executor:\n    model: not-a-real-model\n")
+        monkeypatch.chdir(tmp_path)
+        settings = Settings(openai_api_key="test-key", config_yaml_path=str(cfg))
+        with pytest.raises(ValueError, match="not a supported model"):
+            settings.get_agent_config_for("task_executor")
 
 
 class TestReasoningModelDetection:

@@ -6,6 +6,7 @@ Version 1.2: Planner-backed execution with reasoning traces
 """
 
 import json
+import re
 from typing import Optional, List
 from ChatSystem.core.chat_engine import ChatEngine
 from ChatSystem.core.config import Settings
@@ -81,10 +82,17 @@ When executing tasks:
         self.reasoner = Reasoner()
 
         # Add system persona to conversation
+        self.chat_engine.conversation.add_message("system", self.get_formatted_persona())
+
+    def get_formatted_persona(self) -> str:
+        """The persona with the live tool list substituted into `{tools}`.
+
+        Used both at construction and when AgentManager re-injects the persona
+        after an engine swap, so both paths produce an identical system prompt.
+        """
         tool_names = [tool.get("function", {}).get("name", "unknown")
-                      for tool in chat_engine.tools] if chat_engine.tools else []
-        persona = self.SYSTEM_PERSONA.format(tools=", ".join(tool_names))
-        self.chat_engine.conversation.add_message("system", persona)
+                      for tool in self.chat_engine.tools] if self.chat_engine.tools else []
+        return self.SYSTEM_PERSONA.format(tools=", ".join(tool_names))
 
     @property
     def chat_engine(self) -> ChatEngine:
@@ -149,14 +157,17 @@ When executing tasks:
         Returns:
             bool: True if planning is likely needed, otherwise False.
         """
-        multi_step_keywords = [
-            "and then", "after", "first", "second", "finally",
-            "multiple", "all", "each", "every",
-            "analyze and", "find and", "create and"
+        # Multi-word phrases are safe as substrings; single words must match on
+        # word boundaries so 'all' doesn't fire on 'install'/'call', etc.
+        multi_step_phrases = ["and then", "analyze and", "find and", "create and"]
+        multi_step_words = [
+            "after", "first", "second", "finally", "multiple", "all", "each", "every",
         ]
 
         request_lower = request.lower()
-        return any(keyword in request_lower for keyword in multi_step_keywords)
+        if any(phrase in request_lower for phrase in multi_step_phrases):
+            return True
+        return any(re.search(rf"\b{word}\b", request_lower) for word in multi_step_words)
 
     def _execute_single_step(self, request: str) -> str:
         """
@@ -224,7 +235,12 @@ When executing tasks:
         plan.status = "running"
         iteration = 0
 
-        while not self.planner.is_plan_complete(plan) and iteration < self.max_iterations:
+        # Budget = one pass per step plus max_iterations worth of retries, so a
+        # linear N-step plan always has room to finish. max_iterations alone
+        # (default 5) would falsely fail any plan with more than 5 steps.
+        step_budget = len(plan.steps) + self.max_iterations
+
+        while not self.planner.is_plan_complete(plan) and iteration < step_budget:
             iteration += 1
 
             # Get next step
@@ -257,8 +273,8 @@ When executing tasks:
         elif self.planner.has_failed_steps(plan):
             # Failure was already reported inline; ensure status reflects it.
             plan.status = "failed"
-        elif iteration >= self.max_iterations:
-            results.append(f"\n⚠️  Max iterations ({self.max_iterations}) reached")
+        elif iteration >= step_budget:
+            results.append(f"\n⚠️  Step budget ({step_budget}) reached before completion")
             plan.status = "failed"
         else:
             # No runnable step remains but the plan isn't complete: remaining
