@@ -7,7 +7,7 @@ Data-driven, proof-based, and operating with trillionaire-level resources and pe
 
 from typing import Optional, Dict, Any
 from ChatSystem.core.chat_engine import ChatEngine
-from ChatSystem.core.config import Settings
+from ChatSystem.core.config import Settings, get_settings
 
 
 class TrillionaireFuturist:
@@ -396,7 +396,7 @@ by upgrading how they think, learn, decide, and build – one framework at a tim
                 Defaults to 5.
         """
         self.chat_engine = chat_engine or ChatEngine()
-        self.settings = settings or Settings()  # type: ignore[call-arg]  # key loaded from env
+        self.settings = settings or get_settings()
         self.max_iterations = max_iterations
         self.model = model
 

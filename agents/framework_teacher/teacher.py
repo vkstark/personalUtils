@@ -7,7 +7,7 @@ and transferable mental models that create trillionaire-level capabilities.
 
 from typing import Optional
 from ChatSystem.core.chat_engine import ChatEngine
-from ChatSystem.core.config import Settings
+from ChatSystem.core.config import Settings, get_settings
 
 
 class FrameworkTeacher:
@@ -506,7 +506,7 @@ You are a FRAMEWORK ENGINE that manufactures better thinkers.
                 Defaults to 3.
         """
         self.chat_engine = chat_engine or ChatEngine()
-        self.settings = settings or Settings()  # type: ignore[call-arg]  # key loaded from env
+        self.settings = settings or get_settings()
         self.max_iterations = max_iterations
         self.model = model
 
