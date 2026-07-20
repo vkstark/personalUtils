@@ -100,15 +100,25 @@ class TodoExtractor:
                  verbose: bool = False):
 
         self.tags = tags or self.DEFAULT_TAGS
-        self.extensions = extensions or self.DEFAULT_EXTENSIONS
-        self.exclude_dirs = exclude_dirs or [
+        # Bolt: convert extensions and exclude_dirs to sets for O(1) membership lookups
+        self.extensions = set(extensions or self.DEFAULT_EXTENSIONS)
+        self.exclude_dirs = set(exclude_dirs or [
             '.git', 'node_modules', '__pycache__', '.venv', 'venv',
             'dist', 'build', '.next', '.nuxt', 'target'
-        ]
+        ])
         self.recursive = recursive
         self.case_sensitive = case_sensitive
         self.colors = colors and self._supports_color()
         self.verbose = verbose
+
+        # Bolt: Compile regex patterns once in __init__ instead of repeatedly on every line
+        tag_pattern = '|'.join(re.escape(tag) for tag in self.tags.keys())
+        flags = 0 if self.case_sensitive else re.IGNORECASE
+        self._pattern = re.compile(
+            r'\b(' + tag_pattern + r')\b:?\s*(.+?)(?:\s*\*\/|$)', flags
+        )
+        self._author_pattern = re.compile(r'\(([^)]+)\)')
+        self._priority_pattern = re.compile(r'\[P([0-9])\]')
 
         # Results storage
         self.todos = []
@@ -130,9 +140,8 @@ class TodoExtractor:
             return text
         return f"{color}{text}{Colors.RESET}"
 
-    def _should_skip_dir(self, dirpath: str) -> bool:
+    def _should_skip_dir(self, dir_name: str) -> bool:
         """Check if directory should be skipped"""
-        dir_name = os.path.basename(dirpath)
         return dir_name in self.exclude_dirs or dir_name.startswith('.')
 
     def _should_scan_file(self, filepath: str) -> bool:
@@ -144,24 +153,14 @@ class TodoExtractor:
         """Extract TODO items from a single line"""
         todos = []
 
-        # Build regex pattern for all tags
-        tag_pattern = '|'.join(re.escape(tag) for tag in self.tags.keys())
-
-        # Honor case_sensitive: compile once with the right flag. (The previous
-        # ternary always fell through to IGNORECASE, making the flag a no-op.)
-        flags = 0 if self.case_sensitive else re.IGNORECASE
-        pattern = re.compile(
-            r'\b(' + tag_pattern + r')\b:?\s*(.+?)(?:\s*\*\/|$)', flags
-        )
-
         # Search for tags in the line
-        for match in pattern.finditer(line):
+        for match in self._pattern.finditer(line):
             tag = match.group(1).upper()
             text = match.group(2).strip()
 
             # Extract author if present (e.g., TODO(john): fix this)
             author = None
-            author_match = re.search(r'\(([^)]+)\)', text)
+            author_match = self._author_pattern.search(text)
             if author_match:
                 author = author_match.group(1)
                 text = text.replace(author_match.group(0), '').strip()
@@ -170,7 +169,7 @@ class TodoExtractor:
 
             # Extract priority if present (e.g., TODO[P1]: high priority)
             priority = self.tags.get(tag, 0)
-            priority_match = re.search(r'\[P([0-9])\]', text)
+            priority_match = self._priority_pattern.search(text)
             if priority_match:
                 priority = int(priority_match.group(1))
                 text = text.replace(priority_match.group(0), '').strip()
@@ -218,8 +217,8 @@ class TodoExtractor:
 
         if self.recursive:
             for root, dirs, files in os.walk(directory):
-                # Filter out excluded directories
-                dirs[:] = [d for d in dirs if not self._should_skip_dir(os.path.join(root, d))]
+                # Filter out excluded directories using faster direct d check
+                dirs[:] = [d for d in dirs if not self._should_skip_dir(d)]
 
                 for filename in files:
                     filepath = os.path.join(root, filename)

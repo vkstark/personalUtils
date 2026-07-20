@@ -55,3 +55,7 @@
 ## 2026-07-07 - [Shared OpenAI client cache in ChatEngine]
 **Learning:** Found that each `ChatEngine` instantiation (which happens frequently in agentic loops) was creating a new `OpenAI` client, adding ~33ms of overhead and missing out on HTTP connection pooling.
 **Action:** Implemented a class-level `_client_cache` in `ChatEngine` to reuse clients based on API key. Added `clear_client_cache()` for test isolation. Measured a ~74% reduction in instantiation latency (from ~41.6ms to ~10.8ms).
+
+## 2026-07-08 - [Optimize TodoExtractor with regex compilation and set-based lookups]
+**Learning:** Found a critical O(N) regex compilation bottleneck in `TodoExtractor._extract_todos_from_line` where `re.compile()` was called for every single line of every scanned file. Re-compiling patterns and re-joining strings repeatedly is extremely slow. Also, lookups in linear lists for file extensions and excluded directories were redundant.
+**Action:** Pre-compiled tag, author, and priority regexes once in `__init__`. Converted extensions and excluded directories to sets for O(1) membership lookups, and simplified directory pruning to avoid redundant `os.path.basename` and `os.path.join` calls. Measured a ~5x speedup (duration reduced from ~0.468s to ~0.093s).
