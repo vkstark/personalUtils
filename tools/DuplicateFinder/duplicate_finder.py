@@ -72,9 +72,18 @@ class DuplicateFinder:
         return f"{size:.1f}PB"
 
     def _calculate_hash(self, filepath: str, algorithm: str = 'md5',
-                       chunk_size: int = 8192) -> str:
+                       chunk_size: int = 131072) -> str:
         """Calculate file hash"""
-        hash_func = hashlib.new(algorithm)
+        # Bolt: Avoid dynamic lookup of hash constructors where possible for speed.
+        # Larger chunk size (128KB) reduces the number of read calls on disk.
+        if algorithm == 'md5':
+            hash_func = hashlib.md5()
+        elif algorithm == 'sha256':
+            hash_func = hashlib.sha256()
+        elif algorithm == 'sha1':
+            hash_func = hashlib.sha1()
+        else:
+            hash_func = hashlib.new(algorithm)
 
         try:
             with open(filepath, 'rb') as f:
@@ -92,7 +101,9 @@ class DuplicateFinder:
                    exclude_dirs: Optional[List[str]] = None) -> List[Path]:
         """Get list of files to check"""
         files = []
-        exclude_dirs = exclude_dirs or ['.git', '__pycache__', 'node_modules']
+        # Bolt: Convert exclude_dirs to a set for O(1) lookups
+        exclude_set = set(exclude_dirs) if exclude_dirs else {'.git', '__pycache__', 'node_modules'}
+        ext_set = {ext.lower() for ext in extensions} if extensions else None
 
         for path_str in paths:
             path = Path(path_str)
@@ -101,16 +112,24 @@ class DuplicateFinder:
                 files.append(path)
             elif path.is_dir():
                 if recursive:
-                    for item in path.rglob('*'):
-                        if item.is_file():
-                            # Check if in excluded directory
-                            if any(excl in item.parts for excl in exclude_dirs):
+                    # Bolt: Use os.walk with early directory pruning to avoid traversing excluded subdirectories
+                    for root, dirs, filenames in os.walk(path):
+                        # Modify dirs in-place to prune excluded directories from the traversal
+                        dirs[:] = [d for d in dirs if d not in exclude_set]
+                        for filename in filenames:
+                            filepath = Path(root) / filename
+                            # Fast fallback security check in case start path has excluded parts
+                            if any(part in exclude_set for part in filepath.parts):
                                 continue
-                            files.append(item)
+                            files.append(filepath)
                 else:
-                    for item in path.iterdir():
-                        if item.is_file():
-                            files.append(item)
+                    try:
+                        for entry in os.scandir(path):
+                            if entry.is_file():
+                                files.append(Path(entry.path))
+                    except Exception as e:
+                        if self.verbose:
+                            print(f"Error scanning directory {path}: {e}", file=sys.stderr)
 
         # Filter by size
         if min_size > 0:
@@ -120,8 +139,8 @@ class DuplicateFinder:
             files = [f for f in files if f.stat().st_size <= max_size]
 
         # Filter by extension
-        if extensions:
-            files = [f for f in files if f.suffix.lower() in extensions]
+        if ext_set:
+            files = [f for f in files if f.suffix.lower() in ext_set]
 
         return files
 
