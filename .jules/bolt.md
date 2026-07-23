@@ -55,3 +55,7 @@
 ## 2026-07-07 - [Shared OpenAI client cache in ChatEngine]
 **Learning:** Found that each `ChatEngine` instantiation (which happens frequently in agentic loops) was creating a new `OpenAI` client, adding ~33ms of overhead and missing out on HTTP connection pooling.
 **Action:** Implemented a class-level `_client_cache` in `ChatEngine` to reuse clients based on API key. Added `clear_client_cache()` for test isolation. Measured a ~74% reduction in instantiation latency (from ~41.6ms to ~10.8ms).
+
+## 2026-07-08 - [Consolidated AST Traversal and Directory Pruning in CodeWhisper]
+**Learning:** Re-traversing the AST tree multiple times per file/function ($O(N^2)$ checks for class methods, 4 separate walks for complexity/calls/logs/errors) is a major CPU bottleneck, and non-pruned recursive searches (`rglob`) waste massive I/O searching excluded directories like `.git`.
+**Action:** Replaced `rglob` with `os.walk` to prune directories in-place. Collected AST nodes in a single walk, consolidated the 4 function-body checks into a single-pass loop, and optimized top-level function filtering to an $O(1)$ set membership check of class methods. Measured a 47% speedup (from ~3.79s to ~1.99s) and reduced total function calls by 58% (from 7.58M to 3.18M).

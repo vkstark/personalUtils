@@ -310,6 +310,80 @@ class PythonAnalyzer:
         except Exception:
             return None
     
+    def _analyze_function_body(self, node: ast.AST, source: str) -> Tuple[int, List[str], List[str], List[str], List[str]]:
+        """Analyze function body in a single walk pass to extract complexity, calls, prints, logs, and errors handled"""
+        complexity = 1 if self.include_complexity else 0
+        calls = []
+        prints = []
+        logs = []
+        handled_exceptions = []
+
+        for child in ast.walk(node):
+            # 1. Complexity
+            if self.include_complexity:
+                if isinstance(child, (ast.If, ast.While, ast.For, ast.AsyncFor)):
+                    complexity += 1
+                elif isinstance(child, ast.ExceptHandler):
+                    complexity += 1
+                elif isinstance(child, (ast.And, ast.Or)):
+                    complexity += 1
+                elif isinstance(child, ast.BoolOp):
+                    complexity += len(child.values) - 1
+
+            # 2. Calls, prints, and logs
+            if isinstance(child, ast.Call):
+                if isinstance(child.func, ast.Name):
+                    func_id = child.func.id
+                    if self.include_calls:
+                        calls.append(func_id)
+                    if self.include_prints_logs:
+                        if func_id == 'print':
+                            try:
+                                segment = ast.get_source_segment(source, child)
+                                if segment:
+                                    prints.append(segment)
+                            except (TypeError, ValueError):
+                                prints.append("print(...)")
+                        elif func_id in ('log', 'logger', 'logging'):
+                            try:
+                                segment = ast.get_source_segment(source, child)
+                                if segment:
+                                    logs.append(segment)
+                            except (TypeError, ValueError):
+                                logs.append("log(...)")
+                elif isinstance(child.func, ast.Attribute):
+                    attr_name = child.func.attr
+                    if self.include_calls or self.include_prints_logs:
+                        try:
+                            value_name = self._safe_unparse(child.func.value)
+                        except (AttributeError, TypeError, ValueError):
+                            value_name = None
+
+                        full_call = f"{value_name}.{attr_name}" if value_name else f"*.{attr_name}"
+                        if self.include_calls:
+                            calls.append(full_call)
+                        if self.include_prints_logs and attr_name in ('debug', 'info', 'warning', 'error', 'critical'):
+                            try:
+                                segment = ast.get_source_segment(source, child)
+                                if segment:
+                                    logs.append(segment)
+                            except (TypeError, ValueError):
+                                logs.append(f"*.{attr_name}(...)")
+
+            # 3. Error handling
+            elif isinstance(child, ast.ExceptHandler):
+                if child.type:
+                    if isinstance(child.type, ast.Name):
+                        handled_exceptions.append(child.type.id)
+                    elif isinstance(child.type, ast.Tuple):
+                        for exc in child.type.elts:
+                            if isinstance(exc, ast.Name):
+                                handled_exceptions.append(exc.id)
+                else:
+                    handled_exceptions.append("Exception")
+
+        return complexity, calls, prints, logs, handled_exceptions
+
     def _analyze_function(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef], source: str) -> FunctionInfo:
         """Analyze a function definition"""
         # Extract parameters
@@ -368,23 +442,8 @@ class PythonAnalyzer:
             isinstance(node.body[0].value.value, str)):
             docstring = node.body[0].value.value
         
-        # Calculate complexity
-        complexity = 0
-        if self.include_complexity:
-            complexity = self._calculate_complexity(node)
-        
-        # Extract calls
-        calls_made = []
-        if self.include_calls:
-            calls_made = self._extract_calls(node)
-        
-        # Extract prints and logs
-        prints, logs = [], []
-        if self.include_prints_logs:
-            prints, logs = self._extract_prints_and_logs(node, source)
-        
-        # Extract error handling
-        errors_handled = self._extract_error_handling(node)
+        # Calculate complexity, calls, prints, logs, and error handling in a single pass!
+        complexity, calls_made, prints, logs, errors_handled = self._analyze_function_body(node, source)
         
         # Extract function definition if needed
         definition = None
@@ -509,65 +568,87 @@ class PythonAnalyzer:
             isinstance(tree.body[0].value.value, str)):
             docstring = tree.body[0].value.value
         
+        # Single-pass walk of the AST to collect all relevant nodes
+        class_nodes = []
+        function_nodes = []
+        import_nodes = []
+        import_from_nodes = []
+        assign_nodes = []
+
         for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    import_info = ImportInfo(
-                        module=alias.name,
-                        names=[alias.name],
-                        aliases={alias.name: alias.asname} if alias.asname else {},
-                        line_number=node.lineno
-                    )
-                    imports.append(import_info)
-            
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                function_nodes.append(node)
+            elif isinstance(node, ast.ClassDef):
+                class_nodes.append(node)
+            elif isinstance(node, ast.Import):
+                import_nodes.append(node)
             elif isinstance(node, ast.ImportFrom):
-                module = node.module if node.module else ''
-                names = [alias.name for alias in node.names]
-                aliases = {alias.name: alias.asname for alias in node.names if alias.asname}
+                import_from_nodes.append(node)
+            elif isinstance(node, ast.Assign):
+                assign_nodes.append(node)
                 
+        # Gather all class methods to verify top-level status in O(1)
+        class_methods = set()
+        for cls_node in class_nodes:
+            for item in cls_node.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    class_methods.add(item)
+
+        # Process Imports
+        for node in import_nodes:
+            for alias in node.names:
                 import_info = ImportInfo(
-                    module=module,
-                    names=names,
-                    aliases=aliases,
-                    is_from_import=True,
+                    module=alias.name,
+                    names=[alias.name],
+                    aliases={alias.name: alias.asname} if alias.asname else {},
                     line_number=node.lineno
                 )
                 imports.append(import_info)
-            
-            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                # Only analyze top-level functions (not methods)
-                # Check if this function is not inside a class
-                is_top_level = True
-                for parent in ast.walk(tree):
-                    if isinstance(parent, ast.ClassDef) and hasattr(parent, 'body'):
-                        if node in parent.body:
-                            is_top_level = False
-                            break
                 
-                if is_top_level:
-                    try:
-                        func_info = self._analyze_function(node, source)
-                        functions.append(func_info)
-                    except Exception as e:
-                        # Skip problematic functions but continue analysis
-                        print(f"Warning: Could not analyze function '{node.name}': {e}", file=sys.stderr)
+        # Process FromImports
+        for node in import_from_nodes:
+            module = node.module if node.module else ''
+            names = [alias.name for alias in node.names]
+            aliases = {alias.name: alias.asname for alias in node.names if alias.asname}
             
-            elif isinstance(node, ast.ClassDef):
+            import_info = ImportInfo(
+                module=module,
+                names=names,
+                aliases=aliases,
+                is_from_import=True,
+                line_number=node.lineno
+            )
+            imports.append(import_info)
+
+        # Process Functions
+        for node in function_nodes:
+            # Check if this function is not a class method in O(1)
+            if node not in class_methods:
                 try:
-                    class_info = self._analyze_class(node, source)
-                    classes.append(class_info)
+                    func_info = self._analyze_function(node, source)
+                    functions.append(func_info)
                 except Exception as e:
-                    # Skip problematic classes but continue analysis
-                    print(f"Warning: Could not analyze class '{node.name}': {e}", file=sys.stderr)
-            
-            elif isinstance(node, ast.Assign):
-                # Extract global variables and constants
-                for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        if target.id.isupper():
-                            constants.append(target.id)
-                        else:
-                            global_variables.append(target.id)
+                    # Skip problematic functions but continue analysis
+                    print(f"Warning: Could not analyze function '{node.name}': {e}", file=sys.stderr)
+
+        # Process Classes
+        for node in class_nodes:
+            try:
+                class_info = self._analyze_class(node, source)
+                classes.append(class_info)
+            except Exception as e:
+                # Skip problematic classes but continue analysis
+                print(f"Warning: Could not analyze class '{node.name}': {e}", file=sys.stderr)
+
+        # Process Assignments
+        for node in assign_nodes:
+            # Extract global variables and constants
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    if target.id.isupper():
+                        constants.append(target.id)
+                    else:
+                        global_variables.append(target.id)
         
         # Calculate complexity score
         complexity_score = sum(func.complexity for func in functions)
@@ -600,34 +681,47 @@ class PythonAnalyzer:
             file_str = str(file_path)
             file_name = file_path.name
             
-            for pattern in exclude_patterns:
+            for pat in exclude_patterns:
                 # Handle glob patterns (containing * or ?)
-                if '*' in pattern or '?' in pattern:
-                    if fnmatch.fnmatch(file_name, pattern) or fnmatch.fnmatch(file_str, pattern):
+                if '*' in pat or '?' in pat:
+                    if fnmatch.fnmatch(file_name, pat) or fnmatch.fnmatch(file_str, pat):
                         return True
                 # Handle simple string matching
                 else:
-                    if pattern in file_str:
+                    if pat in file_str:
                         return True
             return False
         
-        for file_path in directory.rglob(pattern):
-            # Check if file should be excluded
-            if should_exclude(file_path):
-                continue
-                
-            analysis = self.analyze_file(str(file_path))
-            results[str(file_path)] = analysis
+        # Walk directory and prune in-place to avoid entering excluded dirs
+        for root, dirs, files in os.walk(directory):
+            # Prune directories in-place to avoid traversal
+            dirs_to_keep = []
+            for d in dirs:
+                dir_path = Path(root) / d
+                if should_exclude(dir_path):
+                    continue
+                dirs_to_keep.append(d)
+            dirs[:] = dirs_to_keep
             
-            # Update statistics
-            self.stats['files_analyzed'] += 1
-            self.stats['total_lines'] += analysis.lines_of_code
-            self.stats['total_functions'] += len(analysis.functions)
-            self.stats['total_classes'] += len(analysis.classes)
-            self.stats['total_imports'] += len(analysis.imports)
-            
-            if analysis.syntax_errors:
-                self.stats['syntax_errors'] += 1
+            # Filter files by pattern and exclusion
+            for file_name in files:
+                if fnmatch.fnmatch(file_name, pattern):
+                    file_path = Path(root) / file_name
+                    if should_exclude(file_path):
+                        continue
+
+                    analysis = self.analyze_file(str(file_path))
+                    results[str(file_path)] = analysis
+
+                    # Update statistics
+                    self.stats['files_analyzed'] += 1
+                    self.stats['total_lines'] += analysis.lines_of_code
+                    self.stats['total_functions'] += len(analysis.functions)
+                    self.stats['total_classes'] += len(analysis.classes)
+                    self.stats['total_imports'] += len(analysis.imports)
+
+                    if analysis.syntax_errors:
+                        self.stats['syntax_errors'] += 1
         
         # Calculate average complexity
         total_complexity = sum(analysis.complexity_score for analysis in results.values())
