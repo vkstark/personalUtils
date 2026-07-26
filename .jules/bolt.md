@@ -55,3 +55,7 @@
 ## 2026-07-07 - [Shared OpenAI client cache in ChatEngine]
 **Learning:** Found that each `ChatEngine` instantiation (which happens frequently in agentic loops) was creating a new `OpenAI` client, adding ~33ms of overhead and missing out on HTTP connection pooling.
 **Action:** Implemented a class-level `_client_cache` in `ChatEngine` to reuse clients based on API key. Added `clear_client_cache()` for test isolation. Measured a ~74% reduction in instantiation latency (from ~41.6ms to ~10.8ms).
+
+## 2026-07-08 - [Optimize GitStats file statistics collection to be single-pass]
+**Learning:** Found a massive O(N) subprocess bottleneck in `GitStats._analyze_files` where up to 100 separate `git log --follow` subprocesses were spawned to compile file statistics. This was highly expensive and limited analysis to only the first 100 alphabetically sorted files.
+**Action:** Aggregated file statistics on the fly in `_analyze_commits` from the primary `git log --numstat` stream and resolved rename-path patterns (e.g. `{old => new}/file`) using a regex helper. Updated `_analyze_files` to simply filter the cached stats against the `git ls-files` set. This completely eliminated all extra git subprocesses and allows analyzing ALL files in the repository.

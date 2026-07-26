@@ -88,6 +88,8 @@ class GitStats:
         self.daily_commits = defaultdict(int)
         self.hourly_commits = defaultdict(int)
         self.day_of_week_commits = defaultdict(int)
+        # Bolt: Dictionary to aggregate raw file changes in a single pass
+        self._raw_file_stats = {}
 
     def _supports_color(self) -> bool:
         """Check if terminal supports color output"""
@@ -129,6 +131,26 @@ class GitStats:
                 print(f"Git command failed: {' '.join(args)}", file=sys.stderr)
                 print(f"Error: {e.stderr}", file=sys.stderr)
             return ""
+
+    def _resolve_rename_path(self, path: str) -> str:
+        """Resolve git rename path syntax (e.g. '{old => new}/file') to its current name."""
+        if ' => ' not in path:
+            return path
+
+        import re
+        match = re.search(r'\{([^}]*)\s*=>\s*([^}]*)\}', path)
+        if match:
+            new_part = match.group(2).strip()
+            prefix = path[:match.start()]
+            suffix = path[match.end():]
+            resolved = f"{prefix}{new_part}{suffix}"
+            return resolved.replace('//', '/')
+
+        parts = path.split(' => ')
+        if len(parts) == 2:
+            return parts[1].strip()
+
+        return path
 
     def analyze(self):
         """Perform complete repository analysis"""
@@ -187,6 +209,20 @@ class GitStats:
                         current_commit['insertions'] += added
                         current_commit['deletions'] += deleted
                         current_commit['files_changed'] += 1
+
+                        # Bolt: Accumulate statistics per file in a single pass to avoid running up to 100 extra slow subprocesses later
+                        raw_filepath = parts[2]
+                        resolved_path = self._resolve_rename_path(raw_filepath)
+                        if resolved_path not in self._raw_file_stats:
+                            self._raw_file_stats[resolved_path] = {
+                                'changes': 0,
+                                'additions': 0,
+                                'deletions': 0
+                            }
+                        f_stat = self._raw_file_stats[resolved_path]
+                        f_stat['changes'] += 1
+                        f_stat['additions'] += added
+                        f_stat['deletions'] += deleted
                     except ValueError:
                         # Skip lines with non-numeric stat values (binary files, etc.)
                         if self.verbose:
@@ -242,45 +278,15 @@ class GitStats:
         # Get all files in the repository
         files_output = self._run_git_command(['ls-files'])
         if files_output:
-            all_files = files_output.split('\n')
+            all_files = [f for f in files_output.split('\n') if f]
             self.stats['total_files'] = len(all_files)
+            all_files_set = set(all_files)
 
-            # Get most changed files
-            for filepath in all_files[:100]:  # Limit to first 100 for performance
-                log_output = self._run_git_command([
-                    'log',
-                    '--follow',
-                    '--pretty=format:',
-                    '--numstat',
-                    '--',
-                    filepath
-                ])
-
-                if log_output:
-                    changes = 0
-                    additions = 0
-                    deletions = 0
-
-                    for line in log_output.split('\n'):
-                        if '\t' in line:
-                            parts = line.split('\t')
-                            if len(parts) >= 2:
-                                try:
-                                    added = int(parts[0]) if parts[0] != '-' else 0
-                                    deleted = int(parts[1]) if parts[1] != '-' else 0
-                                    additions += added
-                                    deletions += deleted
-                                    changes += 1
-                                except ValueError:
-                                    # Skip binary files or files with non-numeric stats
-                                    continue
-
-                    if changes > 0:
-                        self.file_stats[filepath] = {
-                            'changes': changes,
-                            'additions': additions,
-                            'deletions': deletions
-                        }
+            # Bolt: Map aggregated stats to existing files, bypassing any slow git log subprocesses.
+            # This also removes the O(100 files) alphabet limit, so we get stats for ALL repository files!
+            for filepath, f_stat in self._raw_file_stats.items():
+                if filepath in all_files_set:
+                    self.file_stats[filepath] = f_stat
 
     def _calculate_stats(self):
         """Calculate additional statistics and derived metrics"""
