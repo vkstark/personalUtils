@@ -213,3 +213,34 @@ class TestImportDirectory:
         # Should have no results for clean.py
         clean_results = [v for k, v in results.items() if 'clean.py' in k]
         assert len(clean_results) == 0
+
+    def test_default_exclude_dirs_pruned(self, analyzer, temp_dir):
+        """Test that default exclude directories (like .venv) are pruned during scan"""
+        # Create an excluded directory
+        excluded_dir = temp_dir / ".venv"
+        excluded_dir.mkdir()
+
+        # Create a Python file inside the excluded directory with unused imports
+        test_file = excluded_dir / "ignored_file.py"
+        test_file.write_text("import sys\nimport os\nprint('hello')")
+
+        results = analyzer.find_unused_in_directory(str(temp_dir), recursive=True)
+
+        # The excluded directory should be completely skipped
+        assert not any('.venv' in path for path in results.keys())
+
+    def test_custom_exclude_dirs_respected(self, temp_dir):
+        """Test that custom exclude directories are respected during scan"""
+        # Create a custom directory to exclude
+        custom_dir = temp_dir / "custom_exclude"
+        custom_dir.mkdir()
+
+        test_file = custom_dir / "custom_file.py"
+        test_file.write_text("import sys\nimport os\nprint('hello')")
+
+        # Create analyzer with custom exclude dirs
+        custom_analyzer = ImportAnalyzer(colors=False, exclude_dirs=["custom_exclude"])
+        results = custom_analyzer.find_unused_in_directory(str(temp_dir), recursive=True)
+
+        # The custom directory should be completely skipped
+        assert not any("custom_exclude" in path for path in results.keys())
