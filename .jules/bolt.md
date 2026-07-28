@@ -55,3 +55,7 @@
 ## 2026-07-07 - [Shared OpenAI client cache in ChatEngine]
 **Learning:** Found that each `ChatEngine` instantiation (which happens frequently in agentic loops) was creating a new `OpenAI` client, adding ~33ms of overhead and missing out on HTTP connection pooling.
 **Action:** Implemented a class-level `_client_cache` in `ChatEngine` to reuse clients based on API key. Added `clear_client_cache()` for test isolation. Measured a ~74% reduction in instantiation latency (from ~41.6ms to ~10.8ms).
+
+## 2026-07-08 - [Optimize AgentManager.get_agent config resolution]
+**Learning:** `AgentManager.get_agent` was eagerly fetching configurations for all four specialized agents via `get_agent_config_for` on every single cold-lookup request, even though only one specific agent type was being instantiated.
+**Action:** Refactored the method to lazily resolve the configuration block for the requested agent type only (using `agent_type.value`). This eliminated 3 redundant config lookups and dict merges on each agent initialization, reducing latency and saving CPU cycles.
