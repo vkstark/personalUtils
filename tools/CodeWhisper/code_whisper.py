@@ -184,8 +184,6 @@ class PythonAnalyzer:
                 complexity += 1
             elif isinstance(child, ast.ExceptHandler):
                 complexity += 1
-            elif isinstance(child, (ast.And, ast.Or)):
-                complexity += 1
             elif isinstance(child, ast.BoolOp):
                 complexity += len(child.values) - 1
         
@@ -261,7 +259,70 @@ class PythonAnalyzer:
                     handled_exceptions.append("Exception")
         
         return handled_exceptions
-    
+
+    def _analyze_function_body(self, node: ast.AST, source: str) -> Tuple[int, List[str], List[str], List[str], List[str]]:
+        """Single-pass traversal to calculate complexity, calls, prints, logs, and handled errors"""
+        complexity = 1
+        calls = []
+        prints = []
+        logs = []
+        handled_exceptions = []
+
+        for child in ast.walk(node):
+            if isinstance(child, (ast.If, ast.While, ast.For, ast.AsyncFor)):
+                complexity += 1
+            elif isinstance(child, ast.ExceptHandler):
+                complexity += 1
+                if child.type:
+                    if isinstance(child.type, ast.Name):
+                        handled_exceptions.append(child.type.id)
+                    elif isinstance(child.type, ast.Tuple):
+                        for exc in child.type.elts:
+                            if isinstance(exc, ast.Name):
+                                handled_exceptions.append(exc.id)
+                else:
+                    handled_exceptions.append("Exception")
+            elif isinstance(child, ast.BoolOp):
+                complexity += len(child.values) - 1
+            elif isinstance(child, ast.Call):
+                if isinstance(child.func, ast.Name):
+                    func_id = child.func.id
+                    calls.append(func_id)
+                    if func_id == 'print':
+                        try:
+                            segment = ast.get_source_segment(source, child)
+                            if segment:
+                                prints.append(segment)
+                        except (TypeError, ValueError):
+                            prints.append("print(...)")
+                    elif func_id in ('log', 'logger', 'logging'):
+                        try:
+                            segment = ast.get_source_segment(source, child)
+                            if segment:
+                                logs.append(segment)
+                        except (TypeError, ValueError):
+                            logs.append("log(...)")
+                elif isinstance(child.func, ast.Attribute):
+                    attr_name = child.func.attr
+                    try:
+                        value_name = self._safe_unparse(child.func.value)
+                        if value_name:
+                            calls.append(f"{value_name}.{attr_name}")
+                        else:
+                            calls.append(f"*.{attr_name}")
+                    except (AttributeError, TypeError, ValueError):
+                        calls.append(f"*.{attr_name}")
+
+                    if attr_name in ('debug', 'info', 'warning', 'error', 'critical'):
+                        try:
+                            segment = ast.get_source_segment(source, child)
+                            if segment:
+                                logs.append(segment)
+                        except (TypeError, ValueError):
+                            logs.append(f"*.{attr_name}(...)")
+
+        return complexity, calls, prints, logs, handled_exceptions
+
     def _get_function_definition(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef], source_lines: List[str]) -> Union[str, None]:
         """Extract the function definition source code"""
         try:
@@ -368,23 +429,13 @@ class PythonAnalyzer:
             isinstance(node.body[0].value.value, str)):
             docstring = node.body[0].value.value
         
-        # Calculate complexity
-        complexity = 0
-        if self.include_complexity:
-            complexity = self._calculate_complexity(node)
+        # Single-pass traversal to collect all AST metadata
+        comp, calls, prs, lgs, errs = self._analyze_function_body(node, source)
         
-        # Extract calls
-        calls_made = []
-        if self.include_calls:
-            calls_made = self._extract_calls(node)
-        
-        # Extract prints and logs
-        prints, logs = [], []
-        if self.include_prints_logs:
-            prints, logs = self._extract_prints_and_logs(node, source)
-        
-        # Extract error handling
-        errors_handled = self._extract_error_handling(node)
+        complexity = comp if self.include_complexity else 0
+        calls_made = calls if self.include_calls else []
+        prints, logs = (prs, lgs) if self.include_prints_logs else ([], [])
+        errors_handled = errs
         
         # Extract function definition if needed
         definition = None
@@ -508,6 +559,14 @@ class PythonAnalyzer:
             isinstance(tree.body[0].value, ast.Constant) and 
             isinstance(tree.body[0].value.value, str)):
             docstring = tree.body[0].value.value
+
+        # Collect all class methods beforehand for O(1) membership lookup
+        class_methods = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                for item in node.body:
+                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        class_methods.add(item)
         
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -537,14 +596,7 @@ class PythonAnalyzer:
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 # Only analyze top-level functions (not methods)
                 # Check if this function is not inside a class
-                is_top_level = True
-                for parent in ast.walk(tree):
-                    if isinstance(parent, ast.ClassDef) and hasattr(parent, 'body'):
-                        if node in parent.body:
-                            is_top_level = False
-                            break
-                
-                if is_top_level:
+                if node not in class_methods:
                     try:
                         func_info = self._analyze_function(node, source)
                         functions.append(func_info)
@@ -611,23 +663,28 @@ class PythonAnalyzer:
                         return True
             return False
         
-        for file_path in directory.rglob(pattern):
-            # Check if file should be excluded
-            if should_exclude(file_path):
-                continue
-                
-            analysis = self.analyze_file(str(file_path))
-            results[str(file_path)] = analysis
+        for root, dirs, files in os.walk(directory):
+            # Prune excluded directories in-place to avoid traversing them
+            dirs[:] = [d for d in dirs if not should_exclude(Path(root) / d)]
             
-            # Update statistics
-            self.stats['files_analyzed'] += 1
-            self.stats['total_lines'] += analysis.lines_of_code
-            self.stats['total_functions'] += len(analysis.functions)
-            self.stats['total_classes'] += len(analysis.classes)
-            self.stats['total_imports'] += len(analysis.imports)
-            
-            if analysis.syntax_errors:
-                self.stats['syntax_errors'] += 1
+            for file in files:
+                if fnmatch.fnmatch(file, pattern):
+                    file_path = Path(root) / file
+                    if should_exclude(file_path):
+                        continue
+
+                    analysis = self.analyze_file(str(file_path))
+                    results[str(file_path)] = analysis
+
+                    # Update statistics
+                    self.stats['files_analyzed'] += 1
+                    self.stats['total_lines'] += analysis.lines_of_code
+                    self.stats['total_functions'] += len(analysis.functions)
+                    self.stats['total_classes'] += len(analysis.classes)
+                    self.stats['total_imports'] += len(analysis.imports)
+
+                    if analysis.syntax_errors:
+                        self.stats['syntax_errors'] += 1
         
         # Calculate average complexity
         total_complexity = sum(analysis.complexity_score for analysis in results.values())
