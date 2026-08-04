@@ -12,6 +12,7 @@ import sys
 import argparse
 import subprocess
 import json
+import re
 from pathlib import Path
 from typing import List
 from datetime import datetime, timedelta
@@ -137,7 +138,6 @@ class GitStats:
         if ' => ' not in path:
             return path
 
-        import re
         match = re.search(r'\{([^}]*)\s*=>\s*([^}]*)\}', path)
         if match:
             new_part = match.group(2).strip()
