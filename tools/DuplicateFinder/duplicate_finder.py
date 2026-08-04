@@ -121,6 +121,10 @@ class DuplicateFinder:
                             # Fast fallback security check in case start path has excluded parts
                             if any(part in exclude_set for part in filepath.parts):
                                 continue
+                            # os.walk yields broken symlinks among filenames; skip them so the
+                            # stat()-based size filters below can't raise FileNotFoundError
+                            if not filepath.is_file():
+                                continue
                             files.append(filepath)
                 else:
                     try:
