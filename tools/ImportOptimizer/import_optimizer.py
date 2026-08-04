@@ -12,8 +12,7 @@ import sys
 import argparse
 import ast
 from pathlib import Path
-from typing import Dict, List, Tuple
-from collections import defaultdict
+from typing import Dict, List, Tuple, Optional
 
 # Color codes for terminal output
 class Colors:
@@ -35,9 +34,17 @@ class Colors:
 class ImportAnalyzer:
     """Analyze Python imports"""
 
-    def __init__(self, colors: bool = True, verbose: bool = False):
+    # Bolt: Default directories to exclude during scanning to prevent traversing virtual environments, build artifacts, etc.
+    DEFAULT_EXCLUDE_DIRS = {
+        '.git', 'node_modules', '__pycache__', '.venv', 'venv',
+        'dist', 'build', '.next', '.nuxt', 'target'
+    }
+
+    def __init__(self, colors: bool = True, verbose: bool = False, exclude_dirs: Optional[List[str]] = None):
         self.colors = colors and self._supports_color()
         self.verbose = verbose
+        # Bolt: Store excluded directories as a set for O(1) membership lookups
+        self.exclude_dirs = set(exclude_dirs) if exclude_dirs is not None else self.DEFAULT_EXCLUDE_DIRS
 
     def _supports_color(self) -> bool:
         """Check if terminal supports color output"""
@@ -114,16 +121,32 @@ class ImportAnalyzer:
 
     def find_unused_in_directory(self, directory: str, recursive: bool = True) -> Dict[str, List]:
         """Find unused imports in directory"""
-        directory = Path(directory)
+        directory_path = Path(directory)
         results = {}
 
-        pattern = '**/*.py' if recursive else '*.py'
-
-        for filepath in directory.glob(pattern):
-            if filepath.is_file():
-                analysis = self.analyze_file(str(filepath))
-                if 'error' not in analysis and analysis.get('unused'):
-                    results[str(filepath)] = analysis['unused']
+        # Bolt: Optimized scanning with directory pruning to avoid scanning virtualenvs, build artifacts, etc.
+        if recursive:
+            for root, dirs, files in os.walk(directory_path):
+                # In-place modification of dirs to prune excluded directories immediately
+                dirs[:] = [d for d in dirs if d not in self.exclude_dirs]
+                for file in files:
+                    if file.endswith('.py'):
+                        filepath = os.path.join(root, file)
+                        analysis = self.analyze_file(filepath)
+                        if 'error' not in analysis and analysis.get('unused'):
+                            results[filepath] = analysis['unused']
+        else:
+            # Bolt: Optimize non-recursive path using os.scandir which avoids glob overhead
+            try:
+                for entry in os.scandir(directory_path):
+                    if entry.is_file() and entry.name.endswith('.py'):
+                        filepath = entry.path
+                        analysis = self.analyze_file(filepath)
+                        if 'error' not in analysis and analysis.get('unused'):
+                            results[filepath] = analysis['unused']
+            except OSError as e:
+                if self.verbose:
+                    print(f"Error scanning directory {directory}: {e}", file=sys.stderr)
 
         return results
 
