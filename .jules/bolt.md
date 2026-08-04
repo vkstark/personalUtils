@@ -9,6 +9,7 @@
 ## 2026-04-06 - [Persisting token counts for instant history loads]
 **Learning:** Even with O(1) token count lookups, loading a large history file still required re-calculating tokens for every message using `tiktoken` upon startup. This created a linear startup delay that grew with history size.
 **Action:** Migrated the `tokens` cache from a `PrivateAttr` to a public field in the `Message` model. This allows token counts to be saved to disk and reused on subsequent loads. Measured a 99.8% reduction in startup load time for a 2,000-message history (from ~0.6s to <0.001s).
+
 ## 2026-04-14 - [Parallel tool execution in ChatEngine]
 **Learning:** Found that sequential tool execution was a major latency bottleneck during multi-tool calls. While the LLM can request parallel tools, the engine was executing them one-by-one.
 **Action:** Implemented a `ThreadPoolExecutor` in `ChatEngine._handle_tool_calls` to execute I/O bound tools concurrently. Refactored the logic into `_execute_single_tool_call` to avoid code duplication and ensure thread-safe, ordered state updates (metrics and conversation history) by processing results sequentially in the main thread. Measured a ~3x speedup for 3 parallel 1s tasks.
@@ -24,6 +25,7 @@
 ## 2026-06-01 - [Optimized ConversationManager serialization and caching]
 **Learning:** Identified that `get_messages()` and `_save_history()` were O(N) operations due to full re-serialization of the conversation history on every turn. In large conversations, this caused significant latency.
 **Action:** Implemented incremental caching for both OpenAI-formatted and JSON-dumped messages. Optimized `_save_history` to use the pre-dumped cache and compact JSON serialization. Reduced `add_message` (inc. save) latency by ~38% and `get_messages` latency by ~80% for 2000 messages.
+
 ## 2026-06-03 - [Optimize streaming and model identification in ChatEngine]
 **Learning:** Found O(N^2) string concatenation patterns in streaming response generation and tool call argument building. Also identified duplicated, inefficient reasoning model identification logic using `any()` with lists.
 **Action:** Replaced `+=` string concatenation with list accumulation and `"".join()` in `_chat_generator` and `_chat_stream`. Centralized reasoning model check using a `REASONING_MODELS` tuple and `str.startswith(tuple)`, which is optimized in C. Measured ~98% improvement in argument building for large payloads.
@@ -55,6 +57,10 @@
 ## 2026-07-07 - [Shared OpenAI client cache in ChatEngine]
 **Learning:** Found that each `ChatEngine` instantiation (which happens frequently in agentic loops) was creating a new `OpenAI` client, adding ~33ms of overhead and missing out on HTTP connection pooling.
 **Action:** Implemented a class-level `_client_cache` in `ChatEngine` to reuse clients based on API key. Added `clear_client_cache()` for test isolation. Measured a ~74% reduction in instantiation latency (from ~41.6ms to ~10.8ms).
+
+## 2026-07-08 - [Optimize DuplicateFinder directory traversal and hashing]
+**Learning:** Found that `DuplicateFinder._get_files` used `Path.rglob('*')` to traverse directories recursively and then filtered out files in excluded directories (like `.git` and `node_modules`). This caused immense disk I/O and CPU overhead because the system physically entered and scanned thousands of files inside those ignored directories.
+**Action:** Implemented early directory pruning using `os.walk` (modifying `dirs[:]` in-place) to avoid entering excluded subdirectories, switched `exclude_dirs` and `extensions` to set-based lookups for O(1) checks, cached direct hashlib functions, and increased disk read buffer chunk size from 8KB to 128KB.
 
 ## 2026-07-09 - [Optimize agent settings instantiation and lazy config retrieval]
 **Learning:** Found that `AgentManager` and each specialized agent were constructing new Pydantic `Settings` objects via `or Settings()` when no settings were provided, incurring redundant `.env` file parsing and Pydantic validation overhead (~0.9ms per instantiation). In addition, `AgentManager.get_agent` was eagerly fetching configuration blocks for all four agent types on every single retrieval.
