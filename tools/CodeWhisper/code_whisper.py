@@ -171,7 +171,7 @@ class PythonAnalyzer:
                     return "<complex_expression>"
         except Exception:
             return "<unparseable>"
-    
+
     def _analyze_function_body(self, node: ast.AST, source: str) -> Tuple[int, List[str], List[str], List[str], List[str]]:
         """Single-pass traversal to calculate complexity, calls, prints, logs, and handled errors"""
         complexity = 1
@@ -950,7 +950,7 @@ Syntax Errors: {self.stats['syntax_errors']}"""
             output.append(f"**Lines of Code:** {analysis.lines_of_code}  ")
 
             if analysis.syntax_errors:
-                output.append(f"\n❌ **SYNTAX ERRORS:**\n")
+                output.append("\n❌ **SYNTAX ERRORS:**\n")
                 for error in analysis.syntax_errors:
                     output.append(f"- {error}")
                 continue
