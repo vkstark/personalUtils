@@ -13,13 +13,10 @@ import sys
 import argparse
 import json
 import re
-import time
 import fnmatch
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple, Set, Union
+from typing import Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass, asdict
-from collections import defaultdict, Counter
-import textwrap
 
 # Color codes for terminal output
 class Colors:
@@ -175,91 +172,6 @@ class PythonAnalyzer:
         except Exception:
             return "<unparseable>"
     
-    def _calculate_complexity(self, node: ast.AST) -> int:
-        """Calculate cyclomatic complexity of a function"""
-        complexity = 1  # Base complexity
-        
-        for child in ast.walk(node):
-            if isinstance(child, (ast.If, ast.While, ast.For, ast.AsyncFor)):
-                complexity += 1
-            elif isinstance(child, ast.ExceptHandler):
-                complexity += 1
-            elif isinstance(child, ast.BoolOp):
-                complexity += len(child.values) - 1
-        
-        return complexity
-    
-    def _extract_calls(self, node: ast.AST) -> List[str]:
-        """Extract function calls from a node"""
-        calls = []
-        for child in ast.walk(node):
-            if isinstance(child, ast.Call):
-                if isinstance(child.func, ast.Name):
-                    calls.append(child.func.id)
-                elif isinstance(child.func, ast.Attribute):
-                    try:
-                        value_name = self._safe_unparse(child.func.value)
-                        # Check for None - _safe_unparse can return None
-                        if value_name:
-                            calls.append(f"{value_name}.{child.func.attr}")
-                        else:
-                            calls.append(f"*.{child.func.attr}")
-                    except (AttributeError, TypeError, ValueError):
-                        # If we can't safely unparse the value, use wildcard
-                        calls.append(f"*.{child.func.attr}")
-        return calls
-    
-    def _extract_prints_and_logs(self, node: ast.AST, source: str) -> Tuple[List[str], List[str]]:
-        """Extract print and log statements"""
-        prints = []
-        logs = []
-        
-        for child in ast.walk(node):
-            if isinstance(child, ast.Call):
-                if isinstance(child.func, ast.Name):
-                    if child.func.id == 'print':
-                        try:
-                            segment = ast.get_source_segment(source, child)
-                            if segment:
-                                prints.append(segment)
-                        except (TypeError, ValueError):
-                            prints.append("print(...)")
-                    elif child.func.id in ('log', 'logger', 'logging'):
-                        try:
-                            segment = ast.get_source_segment(source, child)
-                            if segment:
-                                logs.append(segment)
-                        except (TypeError, ValueError):
-                            logs.append("log(...)")
-                elif isinstance(child.func, ast.Attribute):
-                    if child.func.attr in ('debug', 'info', 'warning', 'error', 'critical'):
-                        try:
-                            segment = ast.get_source_segment(source, child)
-                            if segment:
-                                logs.append(segment)
-                        except (TypeError, ValueError):
-                            logs.append(f"*.{child.func.attr}(...)")
-        
-        return prints, logs
-    
-    def _extract_error_handling(self, node: ast.AST) -> List[str]:
-        """Extract exception types handled"""
-        handled_exceptions = []
-        
-        for child in ast.walk(node):
-            if isinstance(child, ast.ExceptHandler):
-                if child.type:
-                    if isinstance(child.type, ast.Name):
-                        handled_exceptions.append(child.type.id)
-                    elif isinstance(child.type, ast.Tuple):
-                        for exc in child.type.elts:
-                            if isinstance(exc, ast.Name):
-                                handled_exceptions.append(exc.id)
-                else:
-                    handled_exceptions.append("Exception")
-        
-        return handled_exceptions
-
     def _analyze_function_body(self, node: ast.AST, source: str) -> Tuple[int, List[str], List[str], List[str], List[str]]:
         """Single-pass traversal to calculate complexity, calls, prints, logs, and handled errors"""
         complexity = 1
@@ -734,7 +646,6 @@ class PythonAnalyzer:
         
         # Content
         for line in lines:
-            padded_line = f"│ {line:<{max_width}} │"
             result.append(self._colorize("│", Colors.CYAN) + f" {line:<{max_width}} " + self._colorize("│", Colors.CYAN))
         
         # Bottom border
