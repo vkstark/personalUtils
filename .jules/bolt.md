@@ -58,6 +58,10 @@
 **Learning:** Found that each `ChatEngine` instantiation (which happens frequently in agentic loops) was creating a new `OpenAI` client, adding ~33ms of overhead and missing out on HTTP connection pooling.
 **Action:** Implemented a class-level `_client_cache` in `ChatEngine` to reuse clients based on API key. Added `clear_client_cache()` for test isolation. Measured a ~74% reduction in instantiation latency (from ~41.6ms to ~10.8ms).
 
+## 2026-07-10 - [Optimize TodoExtractor with precompiled regexes and set lookups]
+**Learning:** Found a massive performance bottleneck in `TodoExtractor` where regex patterns for tags, authors, and priorities were eagerly compiled in `_extract_todos_from_line` on every single line scanned (over 23,000 times). Also found linear lookup overhead in directory/file scanning.
+**Action:** Pre-compiled tag, author, and priority regex patterns in `__init__`, converted lookup fields like `extensions` and `exclude_dirs` to sets for O(1) membership lookups, and pruned directory walk paths directly. This achieved a ~6.5x speedup, reducing scanning duration from ~1.02s to ~0.15s.
+
 ## 2026-07-08 - [Optimize ImportOptimizer directory scanning and pruning]
 **Learning:** Found that `ImportOptimizer`'s `find_unused_in_directory` recursively traversed the entire directory tree including `.venv`, `.git`, and `node_modules` without any early pruning. This caused significant delays in repositories with large virtual environments.
 **Action:** Implemented class-level `DEFAULT_EXCLUDE_DIRS` in `ImportAnalyzer` and added early directory pruning using `os.walk` (modifying `dirs[:]` in-place). Also optimized non-recursive scanning by using `os.scandir` to avoid glob overhead.
