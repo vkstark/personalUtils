@@ -13,7 +13,6 @@ import argparse
 import ast
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
-from collections import defaultdict
 
 # Color codes for terminal output
 class Colors:
