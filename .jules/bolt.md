@@ -81,3 +81,7 @@
 ## 2026-07-09 - [Optimize agent settings instantiation and lazy config retrieval]
 **Learning:** Found that `AgentManager` and each specialized agent were constructing new Pydantic `Settings` objects via `or Settings()` when no settings were provided, incurring redundant `.env` file parsing and Pydantic validation overhead (~0.9ms per instantiation). In addition, `AgentManager.get_agent` was eagerly fetching configuration blocks for all four agent types on every single retrieval.
 **Action:** Replaced direct `Settings()` instantiations with the LRU cached `get_settings()`. Refactored `AgentManager.get_agent` to use lazy conditional blocks that only resolve configuration and instantiate the requested `AgentType` on-demand, reducing lookup/instantiation latency by ~47% (from ~12.6ms to ~6.7ms).
+
+## 2026-07-20 - [Optimize PathSketch with lazy loading and directory pruning]
+**Learning:** Found that `PathSketch` was performing expensive, redundant `path.stat()` and `is_dir()` system calls eagerly for every file in the directory tree, even for files and folders that were ultimately filtered out by pattern or hidden/ignore filters.
+**Action:** Refactored `FileInfo` properties (`is_dir`, `stat`, `size`, `modified`, `permissions`) to be lazily evaluated on demand using `@property` decorators. Switched `_get_entries` to use `os.scandir` to apply name-based filters directly on `entry.name` at O(1) before constructing `Path` and `FileInfo` objects.
