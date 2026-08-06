@@ -64,23 +64,73 @@ class TreeStyle:
     }
 
 class FileInfo:
-    """Container for file information"""
-    def __init__(self, path: Path):
+    """Container for file information - Optimized to be lazy-loaded to avoid redundant system calls"""
+    def __init__(self, path: Path, entry: Optional[os.DirEntry] = None):
         self.path = path
         self.name = path.name
-        self.is_dir = path.is_dir()
         self.is_hidden = self.name.startswith('.')
-        
-        try:
-            self.stat = path.stat()
-            self.size = self.stat.st_size
-            self.modified = self.stat.st_mtime
-            self.permissions = stat.filemode(self.stat.st_mode)
-        except (OSError, PermissionError):
-            self.stat = None
-            self.size = 0
-            self.modified = 0
-            self.permissions = '?????????'
+        self._is_dir = None
+        self._entry = entry
+        self._stat = None
+        self._size = None
+        self._modified = None
+        self._permissions = None
+
+    @property
+    def is_dir(self) -> bool:
+        """Lazily determine if the path is a directory, using os.DirEntry if available"""
+        if self._is_dir is None:
+            if self._entry is not None:
+                try:
+                    self._is_dir = self._entry.is_dir(follow_symlinks=True)
+                except OSError:
+                    self._is_dir = False
+            else:
+                self._is_dir = self.path.is_dir()
+        return self._is_dir
+
+    @property
+    def stat(self) -> Optional[os.stat_result]:
+        """Lazily retrieve file statistics using os.DirEntry if available"""
+        if self._stat is None:
+            try:
+                if self._entry is not None:
+                    self._stat = self._entry.stat(follow_symlinks=True)
+                else:
+                    self._stat = self.path.stat()
+            except (OSError, PermissionError):
+                self._stat = False
+        return self._stat if self._stat is not False else None
+
+    @property
+    def size(self) -> int:
+        """Lazily retrieve file size"""
+        if self._size is None:
+            st = self.stat
+            self._size = st.st_size if st else 0
+        return self._size
+
+    @property
+    def modified(self) -> float:
+        """Lazily retrieve modification time"""
+        if self._modified is None:
+            st = self.stat
+            self._modified = st.st_mtime if st else 0
+        return self._modified
+
+    @property
+    def permissions(self) -> str:
+        """Lazily retrieve file permissions"""
+        if self._permissions is None:
+            st = self.stat
+            if st:
+                try:
+                    self._permissions = stat.filemode(st.st_mode)
+                except (OSError, ValueError):
+                    self._permissions = '?????????'
+            else:
+                self._permissions = '?????????'
+        return self._permissions
 
 class DirectoryTree:
     """Enhanced directory tree generator"""
@@ -187,13 +237,32 @@ class DirectoryTree:
         return True
     
     def _get_entries(self, path: Path) -> List[FileInfo]:
-        """Get and sort directory entries"""
+        """Get and sort directory entries, optimized to use os.scandir and lazy FileInfo properties"""
         try:
             entries = []
-            for item in path.iterdir():
-                file_info = FileInfo(item)
-                if self._should_include(file_info):
-                    entries.append(file_info)
+            # Bolt: use os.scandir to avoid creating Path objects and calling stat prematurely
+            for entry in os.scandir(path):
+                # Filter by hidden status using name first (O(1))
+                is_hidden = entry.name.startswith('.')
+                if is_hidden and not self.show_hidden:
+                    continue
+
+                # Filter by pattern matching using name
+                if self.pattern and not self.pattern.search(entry.name):
+                    continue
+
+                # Filter by ignore patterns using name
+                should_ignore = False
+                for ignore_pattern in self.ignore_patterns:
+                    if ignore_pattern.search(entry.name):
+                        should_ignore = True
+                        break
+                if should_ignore:
+                    continue
+
+                # Only construct FileInfo and Path objects if the entry passes all name-based filters
+                file_info = FileInfo(Path(entry.path), entry=entry)
+                entries.append(file_info)
             
             # Sort entries
             if self.sort_by == 'size':
@@ -206,7 +275,7 @@ class DirectoryTree:
                 
             return entries
             
-        except PermissionError:
+        except (PermissionError, OSError):
             self.stats['errors'] += 1
             return []
     
