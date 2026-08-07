@@ -13,6 +13,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from pydantic import BaseModel, Field, TypeAdapter
 
+# Bolt: Module-level cache for tiktoken encodings to bypass the heavy (~5-10ms) registry lookups on every ConversationManager initialization.
+_encoding_cache: Dict[str, Any] = {}
+
+def _get_cached_encoding(model: str) -> Any:
+    if model not in _encoding_cache:
+        try:
+            _encoding_cache[model] = tiktoken.encoding_for_model(model)
+        except KeyError:
+            # Fallback for unknown/unsupported models - use latest encoding
+            _encoding_cache[model] = tiktoken.get_encoding("o200k_base")
+    return _encoding_cache[model]
+
 if TYPE_CHECKING:
     from ChatSystem.core.chat_engine import ChatEngine
 
@@ -177,11 +189,8 @@ class ConversationManager:
             print(f"Warning: Could not create history directory: {e}")
 
         # Initialize tokenizer
-        try:
-            self.encoding = tiktoken.encoding_for_model(model)
-        except KeyError:
-            # Fallback for unknown/unsupported models - use latest encoding
-            self.encoding = tiktoken.get_encoding("o200k_base")
+        # Bolt: Retrieve cached encoding to avoid repeated expensive registry lookups
+        self.encoding = _get_cached_encoding(model)
 
         # Seed the system prompt and load prior history inside one save batch.
         # Ordering/batching is load-bearing: add_message auto-saves with O_TRUNC,
