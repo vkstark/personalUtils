@@ -80,6 +80,10 @@ class TestToolContracts:
         # Status must be valid
         assert result.status in [ToolStatus.SUCCESS, ToolStatus.ERROR, ToolStatus.TIMEOUT, ToolStatus.MANUAL_REQUIRED]
 
+        # Guard against the argparse-translation failure class: a mistranslated
+        # flag surfaces as an argparse usage error regardless of status
+        assert "unrecognized arguments" not in (result.stderr or "")
+
         # Duration must be non-negative
         assert result.duration >= 0
 
@@ -99,6 +103,7 @@ class TestToolContracts:
         assert isinstance(result, ToolExecutionResult)
         assert result.status == ToolStatus.SUCCESS
         assert result.stdout is not None
+        assert "hello" in result.stdout  # the analyzed function shows up
         assert result.duration >= 0
 
     def test_code_whisper_invalid_path(self, executor):
@@ -131,8 +136,8 @@ class TestToolContracts:
         })
 
         assert isinstance(result, ToolExecutionResult)
-        # Should handle invalid URL gracefully
-        assert result.status in [ToolStatus.ERROR, ToolStatus.SUCCESS]  # Depends on implementation
+        # The URL security layer rejects non-http(s) schemes before any subprocess
+        assert result.status == ToolStatus.ERROR
         assert result.duration >= 0
 
     def test_duplicate_finder_success(self, executor, temp_dir):
@@ -144,6 +149,7 @@ class TestToolContracts:
 
         assert isinstance(result, ToolExecutionResult)
         assert result.status == ToolStatus.SUCCESS
+        assert "Total files scanned" in result.stdout
         assert result.duration >= 0
 
     def test_duplicate_finder_invalid_path(self, executor):
@@ -165,8 +171,9 @@ class TestToolContracts:
         result = executor.execute("manage_code_snippets", {"action": "list"})
 
         assert isinstance(result, ToolExecutionResult)
-        # Should succeed (empty list is OK)
-        assert result.status in [ToolStatus.SUCCESS, ToolStatus.ERROR]
+        # Listing an empty store succeeds
+        assert result.status == ToolStatus.SUCCESS
+        assert "No snippets found" in result.stdout
         assert result.duration >= 0
 
     def test_bulk_rename_requires_manual(self, executor, temp_dir):
@@ -194,7 +201,8 @@ class TestToolContracts:
         })
 
         assert isinstance(result, ToolExecutionResult)
-        assert result.status in [ToolStatus.SUCCESS, ToolStatus.ERROR]
+        assert result.status == ToolStatus.SUCCESS
+        assert "KEY1" in result.stdout  # parsed variables are listed (values redacted)
         assert result.duration >= 0
 
     def test_env_manager_other_actions_require_manual(self, executor):
@@ -222,7 +230,9 @@ class TestToolContracts:
         })
 
         assert isinstance(result, ToolExecutionResult)
-        assert result.status in [ToolStatus.SUCCESS, ToolStatus.ERROR]
+        # Files differ (exit code 1 by CI convention) - still a successful comparison
+        assert result.status == ToolStatus.SUCCESS
+        assert "Hello world" in result.stdout
         assert result.duration >= 0
 
     def test_git_stats_success(self, executor, tmp_path):
@@ -240,7 +250,8 @@ class TestToolContracts:
         })
 
         assert isinstance(result, ToolExecutionResult)
-        assert result.status in [ToolStatus.SUCCESS, ToolStatus.ERROR]
+        assert result.status == ToolStatus.SUCCESS
+        assert "Total Commits" in result.stdout
         assert result.duration >= 0
 
     def test_import_optimizer_success(self, executor, temp_dir):
@@ -255,7 +266,8 @@ class TestToolContracts:
         })
 
         assert isinstance(result, ToolExecutionResult)
-        assert result.status in [ToolStatus.SUCCESS, ToolStatus.ERROR]
+        assert result.status == ToolStatus.SUCCESS
+        assert "Unused imports" in result.stdout  # os and sys are both unused
         assert result.duration >= 0
 
     def test_path_sketch_success(self, executor, temp_dir):
@@ -270,7 +282,7 @@ class TestToolContracts:
         assert result.duration >= 0
 
     def test_todo_extractor_success(self, executor, temp_dir):
-        """TodoExtractor: extract TODOs from file (returns ERROR when TODOs found)"""
+        """TodoExtractor: extract TODOs from file (exit code 1 = TODOs found, still success)"""
         # Create a file with TODOs
         test_file = Path(temp_dir) / "test.py"
         test_file.write_text("# TODO: implement this\ndef foo():\n    pass\n")
@@ -281,12 +293,13 @@ class TestToolContracts:
         })
 
         assert isinstance(result, ToolExecutionResult)
-        # TodoExtractor returns exit code 1 when TODOs are found (by design - for CI)
-        assert result.status == ToolStatus.ERROR
+        # TodoExtractor exits 1 when TODOs are found (CI convention); the
+        # executor reports that as SUCCESS - finding TODOs is the tool working
+        assert result.status == ToolStatus.SUCCESS
         assert result.exit_code == 1
         assert result.duration >= 0
-        # But it should have output showing the TODOs
-        assert result.stdout is not None or result.stderr is not None
+        # And the output shows the TODOs
+        assert "TODO" in result.stdout
 
     def test_data_convert_success(self, executor, temp_dir):
         """DataConvert: convert JSON to YAML"""
@@ -303,7 +316,8 @@ class TestToolContracts:
         })
 
         assert isinstance(result, ToolExecutionResult)
-        assert result.status in [ToolStatus.SUCCESS, ToolStatus.ERROR]
+        assert result.status == ToolStatus.SUCCESS
+        assert "key: value" in output_file.read_text()  # converted YAML written
         assert result.duration >= 0
         assert result.has_side_effects is True  # Writes output file
 
