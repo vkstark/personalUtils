@@ -39,7 +39,7 @@ class TestFileDiff:
         file1.write_text(content)
         file2.write_text(content)
 
-        result = differ.compare_files(str(file1), str(file2))
+        differ.compare_files(str(file1), str(file2))
 
         assert differ.stats['total_changes'] == 0
         assert differ.are_files_identical(str(file1), str(file2))
@@ -48,7 +48,7 @@ class TestFileDiff:
         """Test comparing different files"""
         file1, file2 = file_pair
 
-        result = differ.compare_files(str(file1), str(file2))
+        differ.compare_files(str(file1), str(file2))
 
         assert differ.stats['total_changes'] > 0
         assert not differ.are_files_identical(str(file1), str(file2))

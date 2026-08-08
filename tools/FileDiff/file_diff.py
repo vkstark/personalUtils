@@ -228,24 +228,20 @@ class FileDiff:
         diff_lines = list(diff)[2:]
 
         in_removed = False
-        in_added = False
 
         for line in diff_lines:
             if line.startswith('***************'):
                 # Separator
                 output.append(self._colorize(line, Colors.BRIGHT_CYAN + Colors.BOLD))
                 in_removed = False
-                in_added = False
             elif line.startswith('***'):
                 # Removed section header
                 output.append(self._colorize(line, Colors.BRIGHT_RED + Colors.BOLD))
                 in_removed = True
-                in_added = False
             elif line.startswith('---'):
                 # Added section header
                 output.append(self._colorize(line, Colors.BRIGHT_GREEN + Colors.BOLD))
                 in_removed = False
-                in_added = True
             elif line.startswith('!'):
                 # Changed line
                 self.stats['modified_lines'] += 1

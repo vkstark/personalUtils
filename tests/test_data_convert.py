@@ -68,8 +68,6 @@ class TestDataConverter:
 
     def test_csv_structure_validation(self, converter, temp_dir):
         """Test CSV validation (requires list of dicts)"""
-        output_file = temp_dir / "output.csv"
-
         # Valid data (list of dicts)
         valid_data = [{"name": "John", "age": 30}, {"name": "Jane", "age": 25}]
 
