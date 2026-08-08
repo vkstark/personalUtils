@@ -344,6 +344,12 @@ Type your message or try these commands:
                     target_ratio=0.6
                 )
 
+            if summary is None:
+                self.console.print(
+                    "[yellow]Nothing to summarize — conversation unchanged.[/yellow]"
+                )
+                return
+
             # Show new token usage
             new_usage = self.conversation.get_context_window_usage()
             saved_tokens = current_tokens - new_usage["total_tokens"]
@@ -376,9 +382,12 @@ Type your message or try these commands:
         # Build first, mutate after — a failed rebuild must not leave the CLI
         # claiming a session it never activated.
         engine = self._build_engine(path)
-        self.agent_manager.set_current_agent(
-            self.agent_manager.current_agent_type, chat_engine=engine
-        )
+        current_type = self.agent_manager.current_agent_type
+        if current_type is None:
+            # Unreachable in practice (set in __init__); the explicit guard
+            # keeps this runtime boundary honest and narrows the Optional.
+            raise RuntimeError("No active agent to bind to the session")
+        self.agent_manager.set_current_agent(current_type, chat_engine=engine)
         self.agent = self.agent_manager.get_current_agent()
         self.chat_engine = engine
         self.conversation = engine.conversation
@@ -463,6 +472,10 @@ Type your message or try these commands:
             if name == self.session_name:
                 self.console.print("[red]Cannot delete the active session.[/red] Switch away first.")
                 return
+            if path is None:
+                # Unreachable: only the reserved default maps to None and it
+                # rejected delete above. Explicit narrowing for mypy.
+                return
             if not Path(path).exists():
                 self.console.print(f"[red]No session named:[/red] {name}")
                 return
@@ -475,7 +488,7 @@ Type your message or try these commands:
             self.console.print(f"[yellow]Already in session:[/yellow] {name}")
             return
 
-        if sub == "new" and Path(path).exists():
+        if sub == "new" and path is not None and Path(path).exists():
             self.console.print(
                 f"[red]Session '{name}' already exists.[/red] Use /session switch {name}"
             )

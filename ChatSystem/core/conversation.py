@@ -5,6 +5,7 @@ Conversation Manager - Handle message history and context
 
 import os
 import json
+import tempfile
 import tiktoken
 import contextlib
 import collections
@@ -15,6 +16,16 @@ from pydantic import BaseModel, Field, TypeAdapter
 
 if TYPE_CHECKING:
     from ChatSystem.core.chat_engine import ChatEngine
+
+# Prefix identifying rolling-summary messages among role=="system" messages.
+# The full summary header is generated in exactly one place
+# (summarize_conversation); merging matches on this prefix.
+SUMMARY_MESSAGE_PREFIX = "[Conversation Summary -"
+
+# Cap on the summary text emitted by either summarize path. Rolling summaries
+# fold prior summaries into each new one, so without a bound the single
+# summary message could grow without limit across repeated summarizations.
+MAX_SUMMARY_CHARS = 2000
 
 
 class Message(BaseModel):
@@ -528,18 +539,29 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
                 "messages": self._cached_dumped_messages,
             }
 
-            # Restrict to owner-only (0600) before writing secrets-bearing content.
-            # Open with O_CREAT|O_WRONLY|O_TRUNC and mode 0o600 so the file is never
-            # briefly world-readable on creation; re-chmod handles pre-existing files.
-            fd = os.open(self.history_file, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+            # Write to a unique temp file in the same directory, fsync, then
+            # atomically replace the live file — a crash or full disk mid-write
+            # can no longer destroy the existing history (the previous O_TRUNC
+            # open truncated the live file before writing). mkstemp creates the
+            # file 0600, so the replaced file keeps owner-only permissions.
+            fd, tmp_path = tempfile.mkstemp(
+                dir=self.history_file.parent, prefix=self.history_file.name + "."
+            )
             try:
-                os.chmod(self.history_file, 0o600)
-            except OSError:
-                pass
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                # Use compact serialization (no indent, separators=(',', ':')) for speed and size
-                # We already used mode='json' in model_dump, so default=str is no longer needed
-                json.dump(history_data, f, separators=(',', ':'))
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    # Use compact serialization (no indent, separators=(',', ':')) for speed and size
+                    # We already used mode='json' in model_dump, so default=str is no longer needed
+                    json.dump(history_data, f, separators=(',', ':'))
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, self.history_file)
+            except Exception:
+                # Leave the live file untouched; clean up the temp file.
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
 
         except Exception as e:
             print(f"Warning: Could not save history: {e}")
@@ -656,7 +678,7 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             "started_at": self.messages[0].timestamp if self.messages else None,
             "last_message_at": self.messages[-1].timestamp if self.messages else None,
         }
-        return self._cached_summary
+        return self._cached_summary.copy()
 
     @contextlib.contextmanager
     def batch_saves(self):
@@ -686,13 +708,16 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             keep_recent_count += 1
         return keep_recent_count
 
-    def summarize_conversation(self, chat_engine: Optional['ChatEngine'] = None, target_ratio: float = 0.5) -> str:
+    def summarize_conversation(self, chat_engine: Optional['ChatEngine'] = None, target_ratio: float = 0.5) -> Optional[str]:
         """
         Summarize the conversation to reduce token usage.
 
         This method uses an LLM to create a concise summary of the conversation
         history, replacing older messages with a summary while keeping recent
-        messages intact.
+        messages intact. The summary is rolling: any prior summary message is
+        folded into the new one, so at most one summary message exists after
+        any summarize call. The replacement is only committed if it is strictly
+        smaller than the current history.
 
         Args:
             chat_engine: Optional ChatEngine to use for summarization.
@@ -701,18 +726,30 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
                 Default 0.5 means compress to ~50% of current size.
 
         Returns:
-            str: The summary text that was created
+            Optional[str]: The summary text that was created, or None if
+                nothing was compressed (conversation too short, empty
+                compression window, or candidate history not smaller).
         """
         if not self.messages:
-            return "No messages to summarize"
+            return None
 
-        # Keep system messages and recent messages
-        system_messages = [m for m in self.messages if m.role == "system"]
+        # Keep real system prompts/personas untouched. Prior rolling summaries
+        # are system messages too, but are pulled out and folded into the new
+        # summary so at most one summary message exists afterwards.
+        system_messages = []
+        prior_summaries = []
+        for m in self.messages:
+            if m.role != "system":
+                continue
+            if m.content is not None and m.content.startswith(SUMMARY_MESSAGE_PREFIX):
+                prior_summaries.append(m)
+            else:
+                system_messages.append(m)
         other_messages = [m for m in self.messages if m.role != "system"]
 
         if len(other_messages) < 5:
             # Too few messages to summarize meaningfully
-            return "Conversation too short to summarize"
+            return None
 
         # Determine split point. target_ratio is the fraction of recent messages
         # to keep verbatim; the older remainder is compressed into a summary.
@@ -723,7 +760,11 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         # kept history that starts with a role=="tool" message is rejected by the
         # OpenAI API. Move the boundary back to include the owning assistant msg.
         keep_recent_count = self._keep_count_without_orphan_tools(other_messages, keep_recent_count)
-        messages_to_summarize = other_messages[:-keep_recent_count]
+        if keep_recent_count >= len(other_messages):
+            # The orphan-tools walk consumed the whole compression window —
+            # nothing left to summarize.
+            return None
+        messages_to_summarize = prior_summaries + other_messages[:-keep_recent_count]
         messages_to_keep = other_messages[-keep_recent_count:]
 
         if chat_engine:
@@ -733,14 +774,20 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
             # Create structural summary without LLM
             summary_text = self._structural_summarize(messages_to_summarize)
 
-        # Create summary message
+        # Create summary message (the sole place the summary header is generated)
         summary_message = Message(
             role="system",
-            content=f"[Conversation Summary - {len(messages_to_summarize)} messages compressed]\n{summary_text}"
+            content=f"{SUMMARY_MESSAGE_PREFIX} {len(messages_to_summarize)} messages compressed]\n{summary_text}"
         )
 
+        # Commit only if strictly smaller: LLM/structural output can be larger
+        # than what it replaces, and committing that would grow the history.
+        candidate = system_messages + [summary_message] + messages_to_keep
+        if self.count_tokens(candidate) >= self._total_tokens:
+            return None
+
         # Replace messages with summary + kept messages
-        self.messages = system_messages + [summary_message] + messages_to_keep
+        self.messages = candidate
         self._reset_state()
 
         if self.auto_save:
@@ -782,7 +829,7 @@ Provide a concise summary in 3-5 paragraphs that captures:
         for chunk in chat_engine.chat(prompt):
             response_parts.append(chunk)
 
-        return "".join(response_parts)
+        return "".join(response_parts)[:MAX_SUMMARY_CHARS]
 
     def _structural_summarize(self, messages: List[Message]) -> str:
         """
@@ -816,7 +863,7 @@ Provide a concise summary in 3-5 paragraphs that captures:
             if last_msg.content:
                 summary_lines.append(f"Last message: {last_msg.content[:200]}...")
 
-        return "\n".join(summary_lines)
+        return "\n".join(summary_lines)[:MAX_SUMMARY_CHARS]
 
     def auto_summarize_if_needed(self, chat_engine: Optional['ChatEngine'] = None, threshold: float = 0.85) -> bool:
         """
@@ -828,7 +875,7 @@ Provide a concise summary in 3-5 paragraphs that captures:
                 Default 0.85 means summarize at 85% capacity.
 
         Returns:
-            bool: True if summarization was performed, False otherwise
+            bool: True if a summary was committed, False otherwise
         """
         usage = self.get_context_window_usage()
 
@@ -839,9 +886,11 @@ Provide a concise summary in 3-5 paragraphs that captures:
         usage_ratio = usage["total_tokens"] / usage["max_tokens"]
 
         if usage_ratio >= threshold:
-            # Trigger summarization
-            self.summarize_conversation(chat_engine=chat_engine, target_ratio=self.summarize_target_ratio)
-            return True
+            # Trigger summarization; None means nothing was compressed
+            summary = self.summarize_conversation(
+                chat_engine=chat_engine, target_ratio=self.summarize_target_ratio
+            )
+            return summary is not None
 
         return False
 
