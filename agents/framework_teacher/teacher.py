@@ -8,6 +8,7 @@ and transferable mental models that create trillionaire-level capabilities.
 from typing import Optional
 from ChatSystem.core.chat_engine import ChatEngine
 from ChatSystem.core.config import Settings, get_settings
+from ..persona import persona_message
 
 
 class FrameworkTeacher:
@@ -511,7 +512,8 @@ You are a FRAMEWORK ENGINE that manufactures better thinkers.
         self.model = model
 
         # Set the system persona (idempotent — history may already contain it)
-        self.chat_engine.conversation.ensure_system_message(self.SYSTEM_PERSONA)
+        self.chat_engine.conversation.ensure_system_message(
+            persona_message("framework_teacher", self.SYSTEM_PERSONA))
 
     def teach(self, user_request: str) -> str:
         """

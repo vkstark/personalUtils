@@ -8,7 +8,7 @@ import json
 import tiktoken
 import contextlib
 import collections
-from typing import DefaultDict, List, Dict, Any, Optional, Literal, TYPE_CHECKING
+from typing import DefaultDict, List, Dict, Any, Optional, Literal, Tuple, TYPE_CHECKING
 from datetime import datetime, timezone
 from pathlib import Path
 from pydantic import BaseModel, Field, TypeAdapter
@@ -322,6 +322,36 @@ When users ask you to perform tasks, analyze if any tools can help. Break comple
         if any(m.role == "system" and m.content == content for m in self.messages):
             return
         self.add_message(role="system", content=content)
+
+    def remove_system_messages_by_prefix(self, prefixes: Tuple[str, ...]) -> int:
+        """
+        Removes system messages whose content starts with any given prefix.
+
+        Used to evict persisted agent personas on agent switch — a reloaded
+        history carries the previous agent's persona as a plain system message
+        and nothing else ever removes system messages. Rebuilds internal state
+        via `_reset_state()` (the same full-rebuild path summarization uses)
+        rather than hand-maintaining the incremental caches.
+
+        Args:
+            prefixes (Tuple[str, ...]): Content prefixes identifying the
+                system messages to remove.
+
+        Returns:
+            int: The number of messages removed.
+        """
+        kept = [
+            m for m in self.messages
+            if not (m.role == "system" and m.content is not None
+                    and m.content.startswith(prefixes))
+        ]
+        removed = len(self.messages) - len(kept)
+        if removed:
+            self.messages = kept
+            self._reset_state()
+            if self.auto_save:
+                self._save_history()
+        return removed
 
     def get_messages(self, include_system: bool = True) -> List[Dict[str, Any]]:
         """

@@ -8,6 +8,7 @@ Data-driven, proof-based, and operating with trillionaire-level resources and pe
 from typing import Optional, Dict, Any
 from ChatSystem.core.chat_engine import ChatEngine
 from ChatSystem.core.config import Settings, get_settings
+from ..persona import persona_message
 
 
 class TrillionaireFuturist:
@@ -401,7 +402,8 @@ by upgrading how they think, learn, decide, and build – one framework at a tim
         self.model = model
 
         # Set the system persona (idempotent — history may already contain it)
-        self.chat_engine.conversation.ensure_system_message(self.SYSTEM_PERSONA)
+        self.chat_engine.conversation.ensure_system_message(
+            persona_message("trillionaire_futurist", self.SYSTEM_PERSONA))
 
     def respond(self, user_input: str) -> str:
         """

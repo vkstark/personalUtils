@@ -10,6 +10,7 @@ import re
 from typing import Optional, List
 from ChatSystem.core.chat_engine import ChatEngine
 from ChatSystem.core.config import Settings
+from ..persona import persona_message
 from .planner import TaskPlanner, TaskPlan, TaskStep
 from .reasoner import Reasoner
 
@@ -83,7 +84,8 @@ When executing tasks:
 
         # Add system persona to conversation (idempotent — the conversation may
         # have reloaded a history that already contains it)
-        self.chat_engine.conversation.ensure_system_message(self.get_formatted_persona())
+        self.chat_engine.conversation.ensure_system_message(
+            persona_message("task_executor", self.get_formatted_persona()))
 
     def get_formatted_persona(self) -> str:
         """The persona with the live tool list substituted into `{tools}`.

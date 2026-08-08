@@ -11,6 +11,7 @@ from enum import Enum
 from ChatSystem.core.chat_engine import ChatEngine
 from ChatSystem.core.config import Settings, get_settings
 
+from .persona import PERSONA_EVICTION_PREFIXES, persona_message
 from .task_executor.executor import AgentExecutor
 from .transcript_analyzer.analyzer import TranscriptAnalyzer
 from .trillionaire_futurist.futurist import TrillionaireFuturist
@@ -137,10 +138,13 @@ class AgentManager:
             # This is critical because the new engine has a fresh conversation without the persona.
             # Prefer get_formatted_persona() so placeholders (e.g. AgentExecutor's
             # {tools}) are substituted exactly as they are at construction time.
+            # persona_message() keeps this byte-identical to the __init__ path.
             if hasattr(agent, 'get_formatted_persona'):
-                agent.chat_engine.conversation.ensure_system_message(agent.get_formatted_persona())
+                agent.chat_engine.conversation.ensure_system_message(
+                    persona_message(agent_type.value, agent.get_formatted_persona()))
             elif hasattr(agent, 'SYSTEM_PERSONA'):
-                agent.chat_engine.conversation.ensure_system_message(agent.SYSTEM_PERSONA)
+                agent.chat_engine.conversation.ensure_system_message(
+                    persona_message(agent_type.value, agent.SYSTEM_PERSONA))
 
             return agent
 
@@ -207,6 +211,17 @@ class AgentManager:
             chat_engine (Optional[ChatEngine], optional): The ChatEngine for
                 the agent. Defaults to None.
         """
+        # Evict any persisted persona (foreign or stale) from the conversation
+        # this activation will inject into, immediately before the
+        # ensure_system_message injection (agent __init__ or the engine-swap
+        # re-injection in get_agent). Reloaded histories carry the previous
+        # agent's persona as a plain system message and nothing else ever
+        # removes system messages; unmarked legacy personas match by prefix.
+        if chat_engine is None and agent_type not in self.agents:
+            chat_engine = ChatEngine()  # mirrors get_agent's default engine
+        if chat_engine is not None:
+            chat_engine.conversation.remove_system_messages_by_prefix(
+                PERSONA_EVICTION_PREFIXES)
         self.current_agent_type = agent_type
         self.current_agent = self.get_agent(agent_type, chat_engine)
 
