@@ -146,15 +146,31 @@ Important:
         steps = self._parse_plan_response(response, available_tools)
         steps = self._normalize_steps(steps)
 
+        metadata = {
+            "planning_method": "llm",
+            "available_tools": available_tools,
+            "raw_response": response
+        }
+
+        # Degenerate LLM output (refusal prose, {"steps": []}, unparseable
+        # plan) must not produce a zero-step plan — the executor would report
+        # success without executing anything. Fall back to a single step that
+        # runs the goal verbatim and record the degradation in the metadata.
+        if not steps:
+            steps = [TaskStep(
+                step_number=1,
+                description=goal,
+                tool_needed=None,
+                dependencies=[],
+                status="pending"
+            )]
+            metadata["fallback_reason"] = "empty_or_unparseable_plan"
+
         # Create TaskPlan
         plan = TaskPlan(
             goal=goal,
             steps=steps,
-            metadata={
-                "planning_method": "llm",
-                "available_tools": available_tools,
-                "raw_response": response
-            }
+            metadata=metadata
         )
 
         self.plans.append(plan)
@@ -174,11 +190,22 @@ Important:
         steps: List[TaskStep] = []
 
         try:
-            # Try to extract JSON from response
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
-            if json_match:
-                plan_data = json.loads(json_match.group())
+            # Try to extract JSON from response: a fenced ```json block first
+            # (prose around the plan can contain other braces that make the
+            # greedy regex span non-JSON text), then the greedy match.
+            plan_data = None
+            fenced = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response, re.DOTALL)
+            if fenced:
+                try:
+                    plan_data = json.loads(fenced.group(1))
+                except json.JSONDecodeError:
+                    plan_data = None
+            if plan_data is None:
+                json_match = re.search(r'\{.*\}', response, re.DOTALL)
+                if json_match:
+                    plan_data = json.loads(json_match.group())
 
+            if plan_data is not None:
                 for step_data in plan_data.get("steps", []):
                     # Validate tool exists
                     tool_needed = step_data.get("tool_needed")
@@ -369,6 +396,10 @@ Important:
         Returns:
             True if all steps are done, False otherwise
         """
+        # An empty plan is not a completed plan — all() over zero steps is
+        # vacuously True, which would report success without executing anything.
+        if not plan.steps:
+            return False
         return all(step.status in ["done", "skipped"] for step in plan.steps)
 
     def has_failed_steps(self, plan: TaskPlan) -> bool:
