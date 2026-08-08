@@ -204,6 +204,58 @@ class TestTaskPlanner:
         assert plan.steps[0].dependencies == []
         assert plan.steps[1].dependencies == [1]
 
+    def test_create_plan_refusal_prose_falls_back_to_goal_step(self):
+        planner = TaskPlanner(chat_engine=_FakeEngine(
+            responses=["I'm sorry, but I can't help with planning that task."]
+        ))
+        plan = planner.create_plan("Summarize the repo", ["CodeWhisper"])
+        assert len(plan.steps) == 1
+        assert plan.steps[0].description == "Summarize the repo"
+        assert plan.metadata["fallback_reason"] == "empty_or_unparseable_plan"
+
+    def test_create_plan_empty_steps_json_falls_back_to_goal_step(self):
+        planner = TaskPlanner(chat_engine=_FakeEngine(responses=['{"steps": []}']))
+        plan = planner.create_plan("Summarize the repo", [])
+        assert len(plan.steps) == 1
+        assert plan.steps[0].description == "Summarize the repo"
+        assert plan.metadata["fallback_reason"] == "empty_or_unparseable_plan"
+
+    def test_create_plan_brace_heavy_prose_falls_back_to_goal_step(self):
+        # Braces before and after the plan make the greedy regex span non-JSON
+        # text; with no fenced block and no numbered list, the fallback fires.
+        response = (
+            "Some context {alpha} up front.\n"
+            '{"steps": [{"step_number": 1, "description": "Real step", '
+            '"tool_needed": null, "dependencies": []}]}\n'
+            "Closing remark {beta} after."
+        )
+        planner = TaskPlanner(chat_engine=_FakeEngine(responses=[response]))
+        plan = planner.create_plan("Summarize the repo", [])
+        assert len(plan.steps) == 1
+        assert plan.steps[0].description == "Summarize the repo"
+        assert plan.metadata["fallback_reason"] == "empty_or_unparseable_plan"
+
+    def test_create_plan_recovers_fenced_json_amid_brace_prose(self):
+        response = (
+            "Some context {with braces} up front.\n"
+            "```json\n"
+            '{"steps": [{"step_number": 1, "description": "Analyze code", '
+            '"tool_needed": "CodeWhisper", "dependencies": []}]}\n'
+            "```\n"
+            "Closing remark {more braces} after."
+        )
+        planner = TaskPlanner(chat_engine=_FakeEngine(responses=[response]))
+        plan = planner.create_plan("Analyze", ["CodeWhisper"])
+        assert len(plan.steps) == 1
+        assert plan.steps[0].description == "Analyze code"
+        assert plan.steps[0].tool_needed == "CodeWhisper"
+        assert "fallback_reason" not in plan.metadata
+
+    def test_is_plan_complete_false_for_empty_plan(self):
+        planner = TaskPlanner()
+        plan = TaskPlan(goal="g", steps=[])
+        assert planner.is_plan_complete(plan) is False
+
 
 class TestReasoner:
     """Chain-of-thought tracking and trace export."""
