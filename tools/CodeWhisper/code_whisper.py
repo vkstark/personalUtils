@@ -438,6 +438,19 @@ class PythonAnalyzer:
                     constants=[],
                     syntax_errors=[f"Encoding error: {str(e)}"]
                 )
+        except OSError as e:
+            # Unreadable file (broken symlink, permissions, ...): degrade to a
+            # per-file error instead of aborting the whole analysis
+            return FileAnalysis(
+                filepath=filepath,
+                lines_of_code=0,
+                imports=[],
+                functions=[],
+                classes=[],
+                global_variables=[],
+                constants=[],
+                syntax_errors=[f"Read error: {str(e)}"]
+            )
         else:
             encoding = 'utf-8'
         
@@ -583,6 +596,11 @@ class PythonAnalyzer:
                 if fnmatch.fnmatch(file, pattern):
                     file_path = Path(root) / file
                     if should_exclude(file_path):
+                        continue
+
+                    # os.walk yields broken symlinks among files; skip anything
+                    # that isn't a real file so one dangling link can't abort the scan
+                    if not file_path.is_file():
                         continue
 
                     analysis = self.analyze_file(str(file_path))

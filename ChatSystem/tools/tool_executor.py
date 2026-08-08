@@ -132,7 +132,15 @@ class ToolExecutor:
         }
 
     # Argument keys that are filesystem paths (validated against the sandbox root)
-    _PATH_ARG_KEYS = ("path", "file1", "file2", "file_path", "input_file", "output_file", "repo_path")
+    _PATH_ARG_KEYS = ("path", "file1", "file2", "file_path", "compare_with", "input_file", "output_file", "repo_path")
+
+    # Exit codes that mean success, per function. extract_todos exits 1 when
+    # TODOs are found and compare_files exits 1 when files differ (deliberate
+    # CI conventions) - neither is a failure from the model's perspective.
+    _SUCCESS_EXIT_CODES = {
+        "extract_todos": {0, 1},
+        "compare_files": {0, 1},
+    }
 
     def _check_path(self, value: str) -> Optional[str]:
         """Return an error message if `value` is outside the sandbox root, else None."""
@@ -303,7 +311,9 @@ class ToolExecutor:
 
         elif function_name == "find_duplicate_files":
             cmd.append(args["path"])
-            if args.get("recursive"):
+            # Schema declares recursive default true; models omit defaulted
+            # fields, so the absent key must still mean a recursive scan
+            if args.get("recursive", True):
                 cmd.append("--recursive")
             if not args.get("by_hash", True):
                 cmd.append("--by-name")
@@ -313,6 +323,31 @@ class ToolExecutor:
 
         elif function_name == "manage_code_snippets":
             action = args["action"]
+
+            if action == "delete":
+                # Deleting a snippet is destructive and the CLI's confirmation
+                # prompt cannot be answered from a subprocess (and a
+                # model-suppliable flag would prove nothing about user consent).
+                # Same convention as BulkRename: hand back the exact command.
+                snippet_id = args.get("id", "")
+                manual_command = f"python tools/SnippetManager/snippet_manager.py delete {snippet_id}"
+                message = f"SnippetManager delete requires interactive confirmation. Run manually: {manual_command}"
+                return ToolExecutionResult(
+                    status=ToolStatus.MANUAL_REQUIRED,
+                    tool_name=function_name,
+                    duration=time.time() - start_time,
+                    stdout=message,
+                    structured_payload={
+                        "message": message,
+                        "snippet_id": snippet_id,
+                        "command": manual_command
+                    },
+                    has_side_effects=True
+                )
+
+            # SnippetManager: the top-level `--no-color` flag must precede the
+            # subcommand (same rule as EnvManager below)
+            cmd.append("--no-color")
             cmd.append(action)
 
             if action == "add":
@@ -322,8 +357,10 @@ class ToolExecutor:
                 if args.get("tags"):
                     cmd.extend(["--tags"] + args["tags"])
 
-            elif action in ["show", "delete"]:
-                cmd.append(args.get("title", ""))
+            elif action == "show":
+                # The CLI positional is an exact snippet ID (returned by
+                # list/search), not a title
+                cmd.append(args.get("id", ""))
 
             elif action == "search":
                 if args.get("query"):
@@ -332,8 +369,6 @@ class ToolExecutor:
                     cmd.extend(["-l", args["language"]])
                 if args.get("tags"):
                     cmd.extend(["--tags"] + args["tags"])
-
-            cmd.append("--no-color")
 
         elif function_name == "bulk_rename_files":
             # This is complex - requires manual confirmation
@@ -380,7 +415,9 @@ class ToolExecutor:
             cmd.append(args["file1"])
             cmd.append(args["file2"])
             if args.get("format"):
-                cmd.extend(["--mode", args["format"]])  # FileDiff uses --mode, not --format
+                # FileDiff uses --mode, not --format, and its choices use
+                # underscores (side_by_side) where the schema enum is hyphenated
+                cmd.extend(["--mode", args["format"].replace("-", "_")])
             cmd.append("--no-color")
 
         elif function_name == "analyze_git_repository":
@@ -407,6 +444,11 @@ class ToolExecutor:
                 cmd.append("--no-color")
 
         elif function_name == "optimize_python_imports":
+            # ImportOptimizer: the top-level `--no-color` flag must precede the
+            # subcommand (same rule as EnvManager above)
+            if args.get("no_color", True):
+                cmd.append("--no-color")
+
             # ImportOptimizer uses subcommands: unused or organize
             command = args.get("command", "unused")
             cmd.append(command)
@@ -414,9 +456,6 @@ class ToolExecutor:
 
             if command == "unused" and args.get("recursive"):
                 cmd.append("--recursive")
-
-            if args.get("no_color", True):
-                cmd.append("--no-color")
 
         elif function_name == "visualize_directory_tree":
             # PathSketch is a directory tree visualization tool
@@ -496,8 +535,9 @@ class ToolExecutor:
                 # Not JSON (or truncated) - stdout stays plain text
                 pass
 
-            # Determine status based on exit code
-            if result.returncode == 0:
+            # Determine status based on exit code (some tools use non-zero
+            # exit codes as successful CI conventions - see _SUCCESS_EXIT_CODES)
+            if result.returncode in self._SUCCESS_EXIT_CODES.get(function_name, {0}):
                 status = ToolStatus.SUCCESS
                 error_msg = None
                 error_type = None
@@ -511,7 +551,7 @@ class ToolExecutor:
             # MANUAL_REQUIRED earlier and never reach this subprocess path; the only
             # reachable EnvManager action here ("parse"/list) is read-only.
             has_side_effects = function_name in [
-                "manage_code_snippets",  # add/delete operations
+                "manage_code_snippets",  # add operations (delete returns MANUAL_REQUIRED earlier)
                 "convert_data_format",  # writes output file
             ]
 

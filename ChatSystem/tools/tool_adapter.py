@@ -119,11 +119,15 @@ class ToolAdapter:
                     "action": {
                         "type": "string",
                         "enum": ["add", "search", "list", "show", "delete"],
-                        "description": "Action to perform"
+                        "description": "Action to perform. 'delete' is destructive and is not executed here: it returns instructions to run the CLI manually (with its interactive confirmation)."
+                    },
+                    "id": {
+                        "type": "string",
+                        "description": "Snippet ID (for show/delete); IDs are returned by list/search"
                     },
                     "title": {
                         "type": "string",
-                        "description": "Snippet title (for add/show)"
+                        "description": "Snippet title (for add/search)"
                     },
                     "code": {
                         "type": "string",
