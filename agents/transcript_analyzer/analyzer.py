@@ -8,6 +8,7 @@ business value, mental models, and strategic frameworks.
 from typing import Optional, Dict, Any
 from ChatSystem.core.chat_engine import ChatEngine
 from ChatSystem.core.config import Settings, get_settings
+from ..persona import persona_message
 
 
 class TranscriptAnalyzer:
@@ -376,7 +377,8 @@ Begin every analysis by carefully reading the transcript multiple times, then pr
         self.model = model
 
         # Set the system persona (idempotent — history may already contain it)
-        self.chat_engine.conversation.ensure_system_message(self.SYSTEM_PERSONA)
+        self.chat_engine.conversation.ensure_system_message(
+            persona_message("transcript_analyzer", self.SYSTEM_PERSONA))
 
     def analyze(self, transcript: str) -> str:
         """
