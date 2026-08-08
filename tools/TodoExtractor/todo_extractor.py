@@ -387,19 +387,19 @@ class TodoExtractor:
         """Export TODOs to Markdown"""
         output = []
 
-        output.append(f"# TODO Report")
+        output.append("# TODO Report")
         output.append(f"\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        output.append(f"\n## Summary")
+        output.append("\n## Summary")
         output.append(f"\n- Files Scanned: {self.stats['files_scanned']}")
         output.append(f"- Total Items: {self.stats['total_todos']}")
 
         if self.stats['by_tag']:
-            output.append(f"\n### By Tag")
+            output.append("\n### By Tag")
             for tag, count in sorted(self.stats['by_tag'].items(), key=lambda x: -x[1]):
                 output.append(f"- **{tag}**: {count}")
 
         # Group by tag for markdown
-        output.append(f"\n## Detailed List")
+        output.append("\n## Detailed List")
         grouped = defaultdict(list)
         for todo in self.todos:
             grouped[todo.tag].append(todo)

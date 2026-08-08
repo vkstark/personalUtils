@@ -154,7 +154,6 @@ class TestAgent:
 
 def test_imports():
     """Test that all modules can be imported"""
-    import ChatSystem
     from ChatSystem.core import ChatEngine, ConversationManager, Settings
     from ChatSystem.tools import ToolRegistry, ToolAdapter
     from agents.task_executor import TaskPlanner, AgentExecutor, Reasoner

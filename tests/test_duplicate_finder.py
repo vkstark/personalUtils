@@ -166,7 +166,7 @@ class TestDuplicateStatistics:
         """Test that statistics are correctly calculated"""
         temp_dir = duplicate_files[0].parent
 
-        duplicates = finder.find_by_hash([str(temp_dir)], recursive=False)
+        finder.find_by_hash([str(temp_dir)], recursive=False)
 
         # Should have scanned 3 files
         assert finder.stats['total_files'] == 3
@@ -185,7 +185,7 @@ class TestDuplicateStatistics:
         (temp_dir / "file2.txt").write_text(content)
         (temp_dir / "file3.txt").write_text(content)
 
-        duplicates = finder.find_by_hash([str(temp_dir)])
+        finder.find_by_hash([str(temp_dir)])
 
         # Wasted space should be 2 * 1000 = 2000 bytes
         # (keeping 1 of 3 identical files means 2 are wasted)

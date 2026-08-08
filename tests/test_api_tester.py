@@ -96,7 +96,7 @@ class TestAPITester:
         mock_urlopen.return_value.__enter__.return_value = mock_response
 
         headers = {'Authorization': 'Bearer TOKEN'}
-        result = tester.request('https://api.example.com/test', headers=headers)
+        tester.request('https://api.example.com/test', headers=headers)
 
         # Verify request was called
         assert mock_urlopen.called
