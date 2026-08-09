@@ -109,25 +109,39 @@ class BulkRename:
         if path_obj.is_file():
             return [path_obj]
 
-        files = []
-        if self.recursive:
-            if pattern:
-                files = list(path_obj.rglob(pattern))
-            else:
-                files = list(path_obj.rglob('*'))
-        else:
-            if pattern:
-                files = list(path_obj.glob(pattern))
-            else:
-                files = list(path_obj.glob('*'))
-
-        # Filter based on options
         result = []
-        for f in files:
-            if f.is_file():
-                result.append(f)
-            elif f.is_dir() and self.include_dirs:
-                result.append(f)
+        if self.recursive:
+            # Bolt: Use os.walk with early directory pruning to avoid entering heavy/excluded subdirectories
+            exclude_dirs = {'.git', '.venv', 'venv', 'node_modules', '__pycache__', '.pytest_cache', '.mypy_cache'}
+            for root, dirs, filenames in os.walk(path_obj):
+                # Prune excluded directories in-place from traversal
+                dirs[:] = [d for d in dirs if d not in exclude_dirs]
+
+                # If include_dirs is True, collect matching subdirectories
+                if self.include_dirs:
+                    for d in dirs:
+                        dir_path = Path(root) / d
+                        if not pattern or dir_path.match(pattern):
+                            result.append(dir_path)
+
+                for filename in filenames:
+                    file_path = Path(root) / filename
+                    if not pattern or file_path.match(pattern):
+                        result.append(file_path)
+        else:
+            # Bolt: Use fast os.scandir for non-recursive scans to avoid glob overhead
+            try:
+                for entry in os.scandir(path_obj):
+                    entry_path = Path(entry.path)
+                    if entry.is_file():
+                        if not pattern or entry_path.match(pattern):
+                            result.append(entry_path)
+                    elif entry.is_dir() and self.include_dirs:
+                        if not pattern or entry_path.match(pattern):
+                            result.append(entry_path)
+            except Exception as e:
+                if self.verbose:
+                    print(f"Error scanning directory {path}: {e}", file=sys.stderr)
 
         return sorted(result)
 
