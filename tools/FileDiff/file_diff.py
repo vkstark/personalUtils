@@ -271,14 +271,48 @@ class FileDiff:
         """Generate side-by-side diff"""
         output = []
 
-        # Get terminal width
+        # Get terminal width and define constant column layouts once
         term_width = self._get_terminal_width()
         col_width = (term_width - 5) // 2  # 5 chars for separator and margins
+
+        # Pre-allocate padding space strings for O(1) reuse in the loop
+        spaces_col = " " * col_width
+        spaces_col_minus_1 = " " * (col_width - 1)
 
         # Header
         header_line = f"{os.path.basename(file1):<{col_width}} │ {os.path.basename(file2):<{col_width}}"
         output.append(self._colorize(header_line, Colors.BRIGHT_CYAN + Colors.BOLD))
         output.append(self._colorize("─" * term_width, Colors.BRIGHT_CYAN))
+
+        # Pre-colorize separator strings once to avoid repeated O(N) colorize evaluations in the loop
+        sep_delete = self._colorize(" < ", Colors.BRIGHT_RED + Colors.BOLD)
+        sep_insert = self._colorize(" > ", Colors.BRIGHT_GREEN + Colors.BOLD)
+        sep_replace = self._colorize(" ≠ ", Colors.BRIGHT_YELLOW + Colors.BOLD)
+
+        # Bolt: Pre-format, strip, and truncate lines for both files in a single pass O(N)
+        # to avoid O(N^2) or repeated rstrip/len/formatting overhead inside the opcode loop.
+        # Use local variables to maximize lookup speed.
+        show_line_numbers = self.show_line_numbers
+        line_num_len = 5 if show_line_numbers else 0
+        col_width_minus_5 = col_width - 5
+        col_width_minus_8 = col_width - 8
+        col_width_minus_line_num_len = col_width - line_num_len
+
+        left_formatted = []
+        for i, line in enumerate(lines1):
+            line_str = line.rstrip('\n')
+            if len(line_str) > col_width_minus_5:
+                line_str = line_str[:col_width_minus_8] + "..."
+            line_num = f"{i+1:4d} " if show_line_numbers else ""
+            left_formatted.append(f"{line_num}{line_str:<{col_width_minus_line_num_len}}")
+
+        right_formatted = []
+        for j, line in enumerate(lines2):
+            line_str = line.rstrip('\n')
+            if len(line_str) > col_width_minus_5:
+                line_str = line_str[:col_width_minus_8] + "..."
+            line_num = f"{j+1:4d} " if show_line_numbers else ""
+            right_formatted.append(f"{line_num}{line_str}")
 
         # Generate sequence matcher
         matcher = difflib.SequenceMatcher(None, lines1, lines2)
@@ -287,85 +321,46 @@ class FileDiff:
             if tag == 'equal':
                 # Lines are the same
                 for i in range(i1, i2):
-                    line1 = lines1[i].rstrip('\n')
-                    line2 = lines2[j1 + (i - i1)].rstrip('\n')
-
-                    # Truncate if needed
-                    if len(line1) > col_width - 5:
-                        line1 = line1[:col_width - 8] + "..."
-                    if len(line2) > col_width - 5:
-                        line2 = line2[:col_width - 8] + "..."
-
-                    line_num = f"{i+1:4d} " if self.show_line_numbers else ""
-                    left = f"{line_num}{line1:<{col_width - len(line_num)}}"
-                    right = f"{j1 + (i - i1) + 1:4d} {line2}" if self.show_line_numbers else line2
-
+                    left = left_formatted[i]
+                    right = right_formatted[j1 + (i - i1)]
                     output.append(self._colorize(f"{left} │ {right}", Colors.DIM))
-                    self.stats['unchanged_lines'] += 1
+                self.stats['unchanged_lines'] += (i2 - i1)
 
             elif tag == 'delete':
                 # Lines only in file1
                 for i in range(i1, i2):
-                    line = lines1[i].rstrip('\n')
-                    if len(line) > col_width - 5:
-                        line = line[:col_width - 8] + "..."
-
-                    line_num = f"{i+1:4d} " if self.show_line_numbers else ""
-                    left = f"{line_num}{line:<{col_width - len(line_num)}}"
-                    right = " " * col_width
-
-                    output.append(self._colorize(f"{left}", Colors.BG_DARK_RED + Colors.BRIGHT_WHITE) +
-                                self._colorize(" < ", Colors.BRIGHT_RED + Colors.BOLD) +
-                                " " * (col_width - 1))
-                    self.stats['deleted_lines'] += 1
-                    self.stats['total_changes'] += 1
+                    left = left_formatted[i]
+                    output.append(self._colorize(left, Colors.BG_DARK_RED + Colors.BRIGHT_WHITE) +
+                                sep_delete + spaces_col_minus_1)
+                num_changes = i2 - i1
+                self.stats['deleted_lines'] += num_changes
+                self.stats['total_changes'] += num_changes
 
             elif tag == 'insert':
                 # Lines only in file2
                 for j in range(j1, j2):
-                    line = lines2[j].rstrip('\n')
-                    if len(line) > col_width - 5:
-                        line = line[:col_width - 8] + "..."
-
-                    left = " " * col_width
-                    line_num = f"{j+1:4d} " if self.show_line_numbers else ""
-                    right = f"{line_num}{line}"
-
-                    output.append(" " * col_width +
-                                self._colorize(" > ", Colors.BRIGHT_GREEN + Colors.BOLD) +
-                                self._colorize(f"{right}", Colors.BG_DARK_GREEN + Colors.BRIGHT_WHITE))
-                    self.stats['added_lines'] += 1
-                    self.stats['total_changes'] += 1
+                    right = right_formatted[j]
+                    output.append(spaces_col + sep_insert +
+                                self._colorize(right, Colors.BG_DARK_GREEN + Colors.BRIGHT_WHITE))
+                num_changes = j2 - j1
+                self.stats['added_lines'] += num_changes
+                self.stats['total_changes'] += num_changes
 
             elif tag == 'replace':
                 # Lines are different
                 for i in range(i1, i2):
-                    line = lines1[i].rstrip('\n')
-                    if len(line) > col_width - 5:
-                        line = line[:col_width - 8] + "..."
-
-                    line_num = f"{i+1:4d} " if self.show_line_numbers else ""
-                    left = f"{line_num}{line:<{col_width - len(line_num)}}"
-
-                    output.append(self._colorize(f"{left}", Colors.BG_DARK_RED + Colors.BRIGHT_WHITE) +
-                                self._colorize(" ≠ ", Colors.BRIGHT_YELLOW + Colors.BOLD) +
-                                " " * (col_width - 1))
+                    left = left_formatted[i]
+                    output.append(self._colorize(left, Colors.BG_DARK_RED + Colors.BRIGHT_WHITE) +
+                                sep_replace + spaces_col_minus_1)
 
                 for j in range(j1, j2):
-                    line = lines2[j].rstrip('\n')
-                    if len(line) > col_width - 5:
-                        line = line[:col_width - 8] + "..."
+                    right = right_formatted[j]
+                    output.append(spaces_col + sep_replace +
+                                self._colorize(right, Colors.BG_DARK_GREEN + Colors.BRIGHT_WHITE))
 
-                    left = " " * col_width
-                    line_num = f"{j+1:4d} " if self.show_line_numbers else ""
-                    right = f"{line_num}{line}"
-
-                    output.append(" " * col_width +
-                                self._colorize(" ≠ ", Colors.BRIGHT_YELLOW + Colors.BOLD) +
-                                self._colorize(f"{right}", Colors.BG_DARK_GREEN + Colors.BRIGHT_WHITE))
-
-                self.stats['modified_lines'] += max(i2 - i1, j2 - j1)
-                self.stats['total_changes'] += max(i2 - i1, j2 - j1)
+                num_changes = max(i2 - i1, j2 - j1)
+                self.stats['modified_lines'] += num_changes
+                self.stats['total_changes'] += num_changes
 
         return '\n'.join(output)
 
