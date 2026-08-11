@@ -28,6 +28,9 @@ _GIT_HARDENING = [
     "-c", "core.pager=cat",
 ]
 
+# Pre-compile git rename path pattern to avoid compilation overhead in loop
+_RENAME_PATH_RE = re.compile(r'\{([^}]*)\s*=>\s*([^}]*)\}')
+
 # Color codes for terminal output
 class Colors:
     RESET = '\033[0m'
@@ -138,7 +141,7 @@ class GitStats:
         if ' => ' not in path:
             return path
 
-        match = re.search(r'\{([^}]*)\s*=>\s*([^}]*)\}', path)
+        match = _RENAME_PATH_RE.search(path)
         if match:
             new_part = match.group(2).strip()
             prefix = path[:match.start()]
