@@ -145,10 +145,14 @@ class BulkRename:
                 new_name = old_name.replace(find, replace)
 
             elif mode == RenameMode.REGEX:
-                # Regex replacement
-                pattern = kwargs.get('pattern', '')
+                # Regex replacement using pre-compiled pattern if available to avoid compiling inside loops
+                compiled_pattern = kwargs.get('compiled_pattern')
                 replace = kwargs.get('replace', '')
-                new_name = re.sub(pattern, replace, old_name)
+                if compiled_pattern:
+                    new_name = compiled_pattern.sub(replace, old_name)
+                else:
+                    pattern = kwargs.get('pattern', '')
+                    new_name = re.sub(pattern, replace, old_name)
 
             elif mode == RenameMode.SEQUENTIAL:
                 # Sequential numbering
@@ -260,6 +264,14 @@ class BulkRename:
 
         # Generate rename plan
         rename_plan = []
+        if mode == RenameMode.REGEX and kwargs.get('pattern'):
+            try:
+                # Pre-compile the regex pattern once before the loop to optimize performance
+                kwargs['compiled_pattern'] = re.compile(kwargs['pattern'])
+            except re.error as e:
+                print(f"Error: Invalid regex pattern '{kwargs['pattern']}': {e}", file=sys.stderr)
+                return 0
+
         for i, filepath in enumerate(files):
             kwargs['index'] = i
             new_name = self._generate_new_name(filepath, mode, **kwargs)

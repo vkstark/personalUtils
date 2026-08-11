@@ -84,6 +84,19 @@ class TestBulkRename:
 
         assert renamed >= 0
 
+    def test_regex_mode(self, renamer, test_files):
+        """Test regex replacement rename mode"""
+        temp_dir, files = test_files
+
+        renamed = renamer.rename(
+            str(temp_dir),
+            RenameMode.REGEX,
+            pattern="test_file_([0-9]+)\\.txt",
+            replace="demo_\\1"
+        )
+
+        assert renamed >= 0
+
     def test_dry_run_no_changes(self, test_files):
         """Test that dry run doesn't actually rename files"""
         temp_dir, files = test_files

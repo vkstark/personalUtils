@@ -15,6 +15,9 @@ import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+# Pre-compile the regex pattern for parsing .env lines to optimize performance
+_ENV_LINE_RE = re.compile(r'^([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$', re.IGNORECASE)
+
 # Color codes for terminal output
 class Colors:
     RESET = '\033[0m'
@@ -67,8 +70,8 @@ class EnvManager:
                     if not line or line.startswith('#'):
                         continue
 
-                    # Parse KEY=VALUE
-                    match = re.match(r'^([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$', line, re.IGNORECASE)
+                    # Parse KEY=VALUE using the pre-compiled regex pattern to avoid re-compilation overhead in loops
+                    match = _ENV_LINE_RE.match(line)
                     if match:
                         key, value = match.groups()
 
