@@ -17,6 +17,9 @@ from typing import List, Dict, Optional, Any
 from datetime import datetime
 from collections import defaultdict
 
+# Pre-compile regex patterns for slug generation
+_TITLE_SLUG_RE = re.compile(r'[^a-z0-9]+')
+
 # Color codes for terminal output
 class Colors:
     RESET = '\033[0m'
@@ -140,7 +143,7 @@ class SnippetManager:
     def _generate_id(self, title: str) -> str:
         """Generate unique ID for snippet"""
         # Start with title-based ID
-        base_id = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')
+        base_id = _TITLE_SLUG_RE.sub('-', title.lower()).strip('-')
 
         # Ensure uniqueness
         if base_id not in self.snippets:
@@ -219,15 +222,17 @@ class SnippetManager:
     def search(self, query: Optional[str] = None, tags: Optional[List[str]] = None,
                language: Optional[str] = None) -> List[Snippet]:
         """Search snippets"""
-        results = list(self.snippets.values())
+        results = self.snippets.values()
 
-        # Filter by tags
+        # Filter by tags using set intersection / isdisjoint for O(1) tag lookup
         if tags:
-            results = [s for s in results if any(tag in s.tags for tag in tags)]
+            tag_set = set(tags)
+            results = [s for s in results if not tag_set.isdisjoint(s.tags)]
 
-        # Filter by language
+        # Filter by language (pre-calculate target lower-case string once)
         if language:
-            results = [s for s in results if s.language.lower() == language.lower()]
+            lang_lower = language.lower()
+            results = [s for s in results if s.language.lower() == lang_lower]
 
         # Filter by query (fuzzy search in title, description, code, tags)
         if query:
@@ -240,7 +245,7 @@ class SnippetManager:
                     any(query_lower in tag.lower() for tag in s.tags))
             ]
 
-        return results
+        return list(results) if not isinstance(results, list) else results
 
     def list_all(self) -> List[Snippet]:
         """List all snippets"""
