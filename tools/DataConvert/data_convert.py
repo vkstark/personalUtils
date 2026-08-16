@@ -256,12 +256,12 @@ class DataConverter:
         root = ET.Element(root_name)
         self._dict_to_xml(data, root)
 
+        # Performance optimization: Use ET.indent for pretty formatting instead of
+        # expensive minidom parsing and re-serialization.
         if self.pretty:
-            rough_string = ET.tostring(root, encoding='unicode')
-            reparsed = minidom.parseString(rough_string)
-            return reparsed.toprettyxml(indent="  ")
-        else:
-            return ET.tostring(root, encoding='unicode')
+            ET.indent(root, space="  ")
+
+        return ET.tostring(root, encoding='unicode')
 
     def _dict_to_xml(self, data: Any, parent: ET.Element):
         """Convert dictionary to XML elements"""

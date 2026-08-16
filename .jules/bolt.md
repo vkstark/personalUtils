@@ -78,6 +78,10 @@
 **Learning:** Found that `DuplicateFinder._get_files` used `Path.rglob('*')` to traverse directories recursively and then filtered out files in excluded directories (like `.git` and `node_modules`). This caused immense disk I/O and CPU overhead because the system physically entered and scanned thousands of files inside those ignored directories.
 **Action:** Implemented early directory pruning using `os.walk` (modifying `dirs[:]` in-place) to avoid entering excluded subdirectories, switched `exclude_dirs` and `extensions` to set-based lookups for O(1) checks, cached direct hashlib functions, and increased disk read buffer chunk size from 8KB to 128KB.
 
+## 2026-08-16 - [Native ET.indent replaces slow minidom pretty-printing]
+**Learning:** Parsing an ElementTree back into `minidom.parseString()` to call `toprettyxml()` introduces massive DOM object instantiation and string re-parsing overhead (~4x slower on large structures). Python 3.9+ provides `xml.etree.ElementTree.indent(root, space="  ")` which formats element trees in-place before `ET.tostring()`.
+**Action:** Always prefer `ET.indent()` for XML formatting in Python stdlib code rather than converting through `minidom`.
+
 ## 2026-07-09 - [Optimize agent settings instantiation and lazy config retrieval]
 **Learning:** Found that `AgentManager` and each specialized agent were constructing new Pydantic `Settings` objects via `or Settings()` when no settings were provided, incurring redundant `.env` file parsing and Pydantic validation overhead (~0.9ms per instantiation). In addition, `AgentManager.get_agent` was eagerly fetching configuration blocks for all four agent types on every single retrieval.
 **Action:** Replaced direct `Settings()` instantiations with the LRU cached `get_settings()`. Refactored `AgentManager.get_agent` to use lazy conditional blocks that only resolve configuration and instantiate the requested `AgentType` on-demand, reducing lookup/instantiation latency by ~47% (from ~12.6ms to ~6.7ms).
