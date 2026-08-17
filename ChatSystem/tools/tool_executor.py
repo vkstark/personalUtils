@@ -142,14 +142,15 @@ class ToolExecutor:
         "compare_files": {0, 1},
     }
 
-    def _check_path(self, value: str) -> Optional[str]:
+    def _check_path(self, value: str, resolved: Optional[Path] = None) -> Optional[str]:
         """Return an error message if `value` is outside the sandbox root, else None."""
         if self.sandbox_root is None or not value:
             return None
-        try:
-            resolved = Path(value).resolve()
-        except (OSError, ValueError):
-            return f"Invalid path: {value}"
+        if resolved is None:
+            try:
+                resolved = Path(value).resolve()
+            except (OSError, ValueError):
+                return f"Invalid path: {value}"
         if resolved == self.sandbox_root or resolved.is_relative_to(self.sandbox_root):
             return None
         return f"Path '{value}' is outside the allowed root ({self.sandbox_root})"
@@ -184,16 +185,16 @@ class ToolExecutor:
                 # a caller legitimately means.
                 if value.startswith("-"):
                     return f"Path argument '{key}' may not start with '-': {value!r}"
-                err = self._check_path(value)
+                try:
+                    resolved = Path(value).resolve()
+                except (OSError, ValueError):
+                    resolved = None
+                err = self._check_path(value, resolved=resolved)
                 if err:
                     return err
                 # Don't let generic tools exfiltrate secret files. manage_env_files
                 # is exempt: it reads .env on purpose and redacts values.
                 if function_name != "manage_env_files":
-                    try:
-                        resolved = Path(value).resolve()
-                    except (OSError, ValueError):
-                        resolved = None
                     if resolved is not None and _is_secret_file(resolved):
                         return f"Refusing to expose secret file '{value}' via {function_name}"
         if function_name == "test_api_endpoint":
