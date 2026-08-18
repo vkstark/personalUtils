@@ -84,6 +84,22 @@ class TestDataConverter:
         assert "\n" in pretty_output  # Pretty printed has newlines
         assert "  " in pretty_output  # Has indentation
 
+    def test_xml_output(self, converter):
+        """Test XML output in pretty and non-pretty modes"""
+        data = {"person": {"name": "Alice", "age": 30}}
+
+        # Test pretty-printed XML (default fixture has pretty=True)
+        xml_pretty = converter._to_xml(data)
+        assert "<person>" in xml_pretty
+        assert "  <name>Alice</name>" in xml_pretty
+        assert "\n" in xml_pretty
+
+        # Test unformatted XML (pretty=False)
+        converter.pretty = False
+        xml_compact = converter._to_xml(data)
+        assert "<root><person><name>Alice</name>" in xml_compact
+        assert "\n" not in xml_compact
+
 
 class TestDataValidation:
     """Test data validation features"""
