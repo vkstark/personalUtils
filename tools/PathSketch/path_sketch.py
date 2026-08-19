@@ -65,22 +65,70 @@ class TreeStyle:
 
 class FileInfo:
     """Container for file information"""
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, entry: Optional[os.DirEntry] = None, is_dir: Optional[bool] = None):
         self.path = path
         self.name = path.name
-        self.is_dir = path.is_dir()
         self.is_hidden = self.name.startswith('.')
-        
-        try:
-            self.stat = path.stat()
-            self.size = self.stat.st_size
-            self.modified = self.stat.st_mtime
-            self.permissions = stat.filemode(self.stat.st_mode)
-        except (OSError, PermissionError):
-            self.stat = None
-            self.size = 0
-            self.modified = 0
-            self.permissions = '?????????'
+        self._entry = entry
+        self._is_dir = is_dir
+        self._stat = None
+        self._size = None
+        self._modified = None
+        self._permissions = None
+
+    @property
+    def is_dir(self) -> bool:
+        if self._is_dir is None:
+            if self._entry is not None:
+                try:
+                    self._is_dir = self._entry.is_dir()
+                except (OSError, PermissionError):
+                    self._is_dir = False
+            else:
+                try:
+                    self._is_dir = self.path.is_dir()
+                except (OSError, PermissionError):
+                    self._is_dir = False
+        return self._is_dir
+
+    @property
+    def stat(self) -> Optional[os.stat_result]:
+        if self._stat is None:
+            try:
+                if self._entry is not None:
+                    self._stat = self._entry.stat(follow_symlinks=True)
+                else:
+                    self._stat = self.path.stat()
+            except (OSError, PermissionError):
+                self._stat = None
+        return self._stat
+
+    @property
+    def size(self) -> int:
+        if self._size is None:
+            st = self.stat
+            self._size = st.st_size if st is not None else 0
+        return self._size
+
+    @property
+    def modified(self) -> float:
+        if self._modified is None:
+            st = self.stat
+            self._modified = st.st_mtime if st is not None else 0
+        return self._modified
+
+    @property
+    def permissions(self) -> str:
+        if self._permissions is None:
+            st = self.stat
+            if st is not None:
+                try:
+                    self._permissions = stat.filemode(st.st_mode)
+                except (OSError, PermissionError):
+                    self._permissions = '?????????'
+            else:
+                self._permissions = '?????????'
+        return self._permissions
 
 class DirectoryTree:
     """Enhanced directory tree generator"""
@@ -190,9 +238,35 @@ class DirectoryTree:
         """Get and sort directory entries"""
         try:
             entries = []
-            for item in path.iterdir():
-                file_info = FileInfo(item)
-                if self._should_include(file_info):
+            # Use os.scandir for high performance
+            with os.scandir(str(path)) as scandir_it:
+                for entry in scandir_it:
+                    # Quick O(1) checks on name first to prune hidden/ignored entries
+                    # before doing any filesystem stats/checks or object creation
+                    name = entry.name
+                    is_hidden = name.startswith('.')
+
+                    if is_hidden and not self.show_hidden:
+                        continue
+
+                    if self.pattern and not self.pattern.search(name):
+                        continue
+
+                    # Check ignore patterns by name
+                    ignored = False
+                    for ignore_pattern in self.ignore_patterns:
+                        if ignore_pattern.search(name):
+                            ignored = True
+                            break
+                    if ignored:
+                        continue
+
+                    try:
+                        is_dir = entry.is_dir()
+                    except (OSError, PermissionError):
+                        is_dir = False
+                    item_path = path / name
+                    file_info = FileInfo(item_path, entry=entry, is_dir=is_dir)
                     entries.append(file_info)
             
             # Sort entries
@@ -307,7 +381,8 @@ class DirectoryTree:
                 self.stats['directories'] += 1
             else:
                 self.stats['files'] += 1
-                self.stats['total_size'] += file_info.size
+                if self.show_size:
+                    self.stats['total_size'] += file_info.size
             
             if file_info.is_hidden:
                 self.stats['hidden_files'] += 1
